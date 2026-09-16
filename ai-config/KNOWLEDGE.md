@@ -2,7 +2,7 @@
 
 ## Overview
 
-This week the student is being introduced to the C programming language for the first time, working directly within the STM32CubeIDE environment connected to a real STM32F4xx microcontroller. There is no PC-based "Hello World" phase — the student uses the debugger and variable viewer as their primary feedback mechanism from day one. This is an intense week that covers the foundational C concepts needed for all future embedded programming.
+This week the student is being introduced to the C programming language for the first time, working directly within VS Code with the STM32 extension pack connected to a real STM32F4xx microcontroller. There is no PC-based "Hello World" phase — the student uses the debugger and variable viewer as their primary feedback mechanism from day one. This is an intense week that covers the foundational C concepts needed for all future embedded programming.
 
 ---
 
@@ -20,11 +20,11 @@ The student has NO prior programming experience in any language. Assume zero kno
 
 ## Current Learning Focus (Week 1)
 
-The student is learning the fundamentals of C programming within the STM32CubeIDE environment. All verification and feedback happens through the debugger and variable viewer — there is no `printf` or console output available. The specific concepts being learned this week are:
+The student is learning the fundamentals of C programming within VS Code with the STM32 extension pack. All verification and feedback happens through the debugger and variable viewer — there is no `printf` or console output available. The specific concepts being learned this week are:
 
 ### IDE and environment
 
-Creating a project in STM32CubeIDE (without CubeMX code generation), understanding the basic project skeleton, replacing the auto-generated `for(;;)` with `while(1){}`, using the debugger to set breakpoints, step through code, and inspect variable values in real time.
+Creating a project in VS Code with the STM32 extension pack (without CubeMX code generation), understanding the basic project skeleton, replacing the auto-generated `for(;;)` with `while(1){}`, using the debugger to set breakpoints, step through code, and inspect variable values in real time.
 
 ### Data types
 
