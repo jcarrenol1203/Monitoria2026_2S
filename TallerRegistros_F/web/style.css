@@ -1,0 +1,745 @@
+/* ==========================================================================
+   STM32 CMSIS Interactive Hub Style Sheet
+   Designed for Digital Electronics Workshop
+   ========================================================================== */
+
+:root {
+    --bg-main: #0B0F19;
+    --bg-card: #131B2E;
+    --bg-card-hover: #1A243F;
+    --bg-input: #0F1626;
+    --border-color: #23314E;
+    
+    --primary-color: #00F0FF;
+    --primary-glow: rgba(0, 240, 255, 0.4);
+    --secondary-color: #7000FF;
+    
+    --text-main: #F0F4FC;
+    --text-muted: #94A3B8;
+    --text-dim: #64748B;
+    
+    --led-off: #1E293B;
+    --led-on-green: #00FF66;
+    --led-glow-green: rgba(0, 255, 102, 0.8);
+    
+    --btn-blue: #0077FF;
+    --btn-blue-hover: #0055CC;
+    
+    --font-code: 'Fira Code', monospace;
+    --font-sans: 'Inter', system-ui, sans-serif;
+
+    --radius-lg: 16px;
+    --radius-md: 10px;
+    --radius-sm: 6px;
+}
+
+/* Light Theme Variables */
+body.light-mode {
+    --bg-main: #F1F5F9;
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #F8FAFC;
+    --bg-input: #E2E8F0;
+    --border-color: #CBD5E1;
+    
+    --primary-color: #0284C7;
+    --primary-glow: rgba(2, 132, 199, 0.3);
+    
+    --text-main: #0F172A;
+    --text-muted: #475569;
+    --text-dim: #64748B;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    padding-bottom: 2rem;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Top Navbar */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    background: rgba(19, 27, 46, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.logo-chip {
+    background: linear-gradient(135deg, #00F0FF, #7000FF);
+    padding: 0.5rem 0.8rem;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 800;
+    color: #FFF;
+    box-shadow: 0 0 15px var(--primary-glow);
+}
+
+.brand-text h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.brand-text .subtitle {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+/* Buttons */
+.btn {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.6rem 1.2rem;
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.primary-btn {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: #FFF;
+}
+
+.primary-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px var(--primary-glow);
+}
+
+.secondary-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+}
+
+.secondary-btn:hover {
+    background: var(--bg-card-hover);
+}
+
+.icon-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    padding: 0.6rem;
+    border-radius: 50%;
+    font-size: 1.1rem;
+}
+
+/* Status Bar */
+.mcu-status-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    margin: 1.5rem 2rem 1rem 2rem;
+    padding: 0.8rem 1.5rem;
+    border-radius: var(--radius-lg);
+    font-size: 0.88rem;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.status-label {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.status-value {
+    font-weight: 700;
+}
+
+.status-value.highlight {
+    color: var(--primary-color);
+}
+
+.status-tag {
+    background: rgba(0, 240, 255, 0.1);
+    border: 1px solid rgba(0, 240, 255, 0.3);
+    color: var(--primary-color);
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--radius-sm);
+    font-weight: 700;
+    font-size: 0.78rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.dot.pulse {
+    width: 8px;
+    height: 8px;
+    background-color: #00FF66;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #00FF66;
+    animation: pulse-anim 1.5s infinite;
+}
+
+@keyframes pulse-anim {
+    0% { opacity: 0.4; }
+    50% { opacity: 1; }
+    100% { opacity: 0.4; }
+}
+
+/* Dashboard Grid Layout */
+.grid-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    padding: 0 2rem;
+}
+
+@media (max-width: 1024px) {
+    .grid-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.card-header h2 {
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+
+.badge {
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+}
+
+/* Board Simulator */
+.board-container {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.nucleo-board {
+    width: 100%;
+    max-width: 480px;
+    min-height: 280px;
+    background: linear-gradient(145deg, #1A365D, #0F294A);
+    border: 2px solid #2B6CB0;
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    position: relative;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.board-brand {
+    font-family: var(--font-code);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.6);
+    letter-spacing: 2px;
+}
+
+.ic-chip {
+    background: #111827;
+    border: 1px solid #374151;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: #9CA3AF;
+    font-family: var(--font-code);
+    font-size: 0.7rem;
+}
+
+.st-link-chip {
+    width: 100px;
+    height: 40px;
+    margin-top: 0.5rem;
+}
+
+.mcu-chip {
+    width: 120px;
+    height: 120px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border: 2px solid #4B5563;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+}
+
+.chip-notch {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #374151;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+}
+
+.mcu-text {
+    font-weight: 700;
+    color: #E5E7EB;
+}
+
+.component-box {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0.8rem;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    position: absolute;
+}
+
+.led-box {
+    bottom: 1.5rem;
+    left: 1.5rem;
+}
+
+.button-box {
+    bottom: 1.5rem;
+    right: 1.5rem;
+}
+
+.led-bulb {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--led-off);
+    border: 2px solid #475569;
+    transition: all 0.2s ease;
+}
+
+.led-bulb.active {
+    background: var(--led-on-green);
+    border-color: #86EFAC;
+    box-shadow: 0 0 20px var(--led-glow-green), 0 0 40px var(--led-glow-green);
+}
+
+.push-btn-interactive {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--btn-blue);
+    border: 3px solid #60A5FA;
+    cursor: pointer;
+    outline: none;
+    transition: transform 0.1s ease, background-color 0.2s ease;
+    box-shadow: 0 4px 10px rgba(0, 119, 255, 0.5);
+}
+
+.push-btn-interactive:active, .push-btn-interactive.pressed {
+    transform: scale(0.9);
+    background: #0055CC;
+    box-shadow: 0 0 15px rgba(0, 119, 255, 0.8);
+}
+
+.component-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.comp-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.comp-pin {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.comp-state {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.hint-text {
+    margin-top: 1rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* Register Inspector */
+.registers-card .card-body {
+    padding: 1rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    max-height: 460px;
+    overflow-y: auto;
+}
+
+.register-block {
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.8rem;
+}
+
+.reg-title-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.6rem;
+}
+
+.reg-name {
+    font-family: var(--font-code);
+    font-weight: 700;
+    color: var(--primary-color);
+    font-size: 0.9rem;
+}
+
+.reg-addr {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+}
+
+.reg-hex {
+    font-family: var(--font-code);
+    background: rgba(0, 240, 255, 0.1);
+    color: var(--primary-color);
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+
+.bit-field-grid {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    gap: 2px;
+    margin-bottom: 0.4rem;
+}
+
+.bit-cell {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    padding: 0.3rem 0;
+    text-align: center;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.bit-cell:hover {
+    border-color: var(--primary-color);
+}
+
+.bit-cell .bit-idx {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    display: block;
+}
+
+.bit-cell .bit-val {
+    font-family: var(--font-code);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.bit-cell.is-one {
+    background: rgba(0, 240, 255, 0.2);
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.bit-cell.highlight-pa5 {
+    border-color: #00FF66;
+    background: rgba(0, 255, 102, 0.15);
+}
+
+.bit-cell.highlight-pc13 {
+    border-color: #7000FF;
+    background: rgba(112, 0, 255, 0.2);
+}
+
+.reg-legend {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+/* Code Section */
+.code-section {
+    margin: 1.5rem 2rem 0 2rem;
+}
+
+.tab-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tab-btn.active {
+    background: var(--bg-input);
+    color: var(--primary-color);
+}
+
+.tab-content {
+    display: none;
+    padding: 1.5rem;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.code-explain-layout {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+    .code-explain-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+.code-editor-mock {
+    background: #090D16;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.editor-header {
+    background: #0F1626;
+    padding: 0.6rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.copy-btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.copy-btn:hover {
+    background: var(--primary-color);
+    color: #000;
+}
+
+pre {
+    padding: 1rem;
+    overflow-x: auto;
+    font-family: var(--font-code);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #E2E8F0;
+}
+
+.line-comment {
+    color: #64748B;
+    font-style: italic;
+}
+
+.code-highlight {
+    background: rgba(0, 240, 255, 0.1);
+    border-left: 3px solid var(--primary-color);
+    padding-left: 4px;
+    display: inline-block;
+    width: 100%;
+}
+
+.explain-panel h3 {
+    font-size: 1rem;
+    margin-bottom: 1rem;
+}
+
+.explain-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.explain-list li {
+    background: var(--bg-input);
+    border-left: 3px solid var(--primary-color);
+    padding: 0.8rem;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.explain-list strong {
+    color: var(--text-main);
+}
+
+/* Reference Manual Table */
+.rm-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.85rem;
+}
+
+.rm-table th, .rm-table td {
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.rm-table th {
+    background: var(--bg-input);
+    color: var(--primary-color);
+}
+
+.bit-op-card {
+    margin-top: 1.5rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    padding: 1rem;
+    border-radius: var(--radius-md);
+}
+
+.calc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 0.8rem;
+}
+
+.calc-inputs label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+}
+
+select, input[type="number"] {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    margin-top: 0.2rem;
+    width: 100%;
+}
+
+.calc-output {
+    background: #090D16;
+    border: 1px solid var(--border-color);
+    padding: 0.8rem;
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.calc-output span {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.calc-output code {
+    font-family: var(--font-code);
+    color: var(--primary-color);
+    font-size: 0.9rem;
+    margin-top: 0.4rem;
+}
+
+/* CMSIS Generator */
+.generator-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+.gen-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.form-group label {
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.footer {
+    text-align: center;
+    margin-top: 2rem;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}

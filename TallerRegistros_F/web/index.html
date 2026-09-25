@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STM32F411RE CMSIS Interactive Hub - Taller de Registros</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="dark-mode">
+    <header class="navbar">
+        <div class="brand">
+            <div class="logo-chip">
+                <span class="chip-icon">⚡</span>
+                <span class="chip-title">STM32F411RE</span>
+            </div>
+            <div class="brand-text">
+                <h1>Taller de Registros CMSIS</h1>
+                <span class="subtitle">Monitoría de Electrónica Digital</span>
+            </div>
+        </div>
+        <div class="nav-actions">
+            <button id="btn-run-sim" class="btn primary-btn glow">
+                <span class="icon">▶</span> <span id="sim-btn-text">Ejecutar Simulación</span>
+            </button>
+            <button id="btn-reset-sim" class="btn secondary-btn">
+                <span class="icon">🔄</span> Reiniciar MCU
+            </button>
+            <button id="theme-toggle" class="btn icon-btn" title="Cambiar Tema">
+                🌙
+            </button>
+        </div>
+    </header>
+
+    <main class="dashboard">
+        <!-- Top Banner: Mode & Status -->
+        <section class="mcu-status-bar">
+            <div class="status-item">
+                <span class="status-label">Tarjeta:</span>
+                <span class="status-value highlight">NUCLEO-F411RE</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Núcleo:</span>
+                <span class="status-value">ARM® Cortex®-M4 @ 84MHz</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Estado MCU:</span>
+                <span class="status-tag" id="mcu-state-tag"><span class="dot pulse"></span> RUNNING</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">LED LD2 (PA5):</span>
+                <span class="status-tag led-tag" id="led-status-tag">OFF</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Pulsador B1 (PC13):</span>
+                <span class="status-tag btn-tag" id="btn-status-tag">SUELTO (1)</span>
+            </div>
+        </section>
+
+        <!-- Grid Layout for Main Interactive Content -->
+        <div class="grid-container">
+
+            <!-- Panel 1: Hardware Interactive Board Visualizer -->
+            <section class="card board-card">
+                <div class="card-header">
+                    <h2>🕹️ Simulación Hardware NUCLEO-F411RE</h2>
+                    <span class="badge">Interactivo</span>
+                </div>
+                <div class="card-body board-container">
+                    <div class="nucleo-board">
+                        <div class="board-brand">ST NUCLEO-F411RE</div>
+                        
+                        <!-- ST-LINK Chip section -->
+                        <div class="ic-chip st-link-chip">
+                            <span class="chip-label">ST-LINK / V2-1</span>
+                            <span class="usb-port">USB PORT</span>
+                        </div>
+
+                        <!-- Main Microcontroller STM32F411RE -->
+                        <div class="ic-chip mcu-chip">
+                            <div class="chip-notch"></div>
+                            <span class="mcu-text">STM32F411</span>
+                            <span class="mcu-subtext">RET6 ARM</span>
+                        </div>
+
+                        <!-- LD2 Green LED (PA5) -->
+                        <div class="component-box led-box" id="board-led-box">
+                            <div class="led-bulb" id="ld2-led"></div>
+                            <div class="component-info">
+                                <span class="comp-title">LED LD2</span>
+                                <span class="comp-pin">Pin PA5</span>
+                                <span class="comp-state" id="ld2-state-text">0V (LOW)</span>
+                            </div>
+                        </div>
+
+                        <!-- B1 USER Button (PC13) -->
+                        <div class="component-box button-box">
+                            <button id="user-b1-button" class="push-btn-interactive">
+                                <span class="btn-top">B1 USER</span>
+                            </button>
+                            <div class="component-info">
+                                <span class="comp-title">Pulsador B1</span>
+                                <span class="comp-pin">Pin PC13 (Active Low)</span>
+                                <span class="comp-state" id="b1-state-text">3.3V (HIGH)</span>
+                            </div>
+                        </div>
+
+                        <!-- Pins Connectors Visual -->
+                        <div class="morph-connector morph-left">Morpho Left</div>
+                        <div class="morph-connector morph-right">Morpho Right</div>
+                    </div>
+
+                    <div class="hardware-controls">
+                        <p class="hint-text">💡 <strong>Haz clic en el botón azul B1 USER</strong> arriba para simular la pulsación física en la placa y observa cómo reacciona la lectura del registro <code>GPIOC->IDR</code> y la salida en <code>GPIOA->ODR</code>.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Panel 2: Register Bit Manipulator & Monitor -->
+            <section class="card registers-card">
+                <div class="card-header">
+                    <h2>🔬 Inspector de Registros (CMSIS Live Bit View)</h2>
+                    <span class="badge hex-badge" id="active-hex-badge">HEX Active</span>
+                </div>
+                <div class="card-body">
+                    <!-- Register 1: RCC->AHB1ENR -->
+                    <div class="register-block" data-reg="RCC_AHB1ENR">
+                        <div class="reg-title-bar">
+                            <span class="reg-name">RCC->AHB1ENR</span>
+                            <span class="reg-addr">Base: 0x40023800 | Offset: 0x30</span>
+                            <span class="reg-hex" id="hex-RCC_AHB1ENR">0x00000005</span>
+                        </div>
+                        <div class="bit-field-grid" id="bits-RCC_AHB1ENR"></div>
+                        <div class="reg-legend">
+                            <span class="legend-item bit-active-a">Bit 0: GPIOAEN (Reloj GPIOA)</span>
+                            <span class="legend-item bit-active-c">Bit 2: GPIOCEN (Reloj GPIOC)</span>
+                        </div>
+                    </div>
+
+                    <!-- Register 2: GPIOA->MODER -->
+                    <div class="register-block" data-reg="GPIOA_MODER">
+                        <div class="reg-title-bar">
+                            <span class="reg-name">GPIOA->MODER</span>
+                            <span class="reg-addr">Base: 0x40020000 | Offset: 0x00</span>
+                            <span class="reg-hex" id="hex-GPIOA_MODER">0x00000400</span>
+                        </div>
+                        <div class="bit-field-grid" id="bits-GPIOA_MODER"></div>
+                        <div class="reg-legend">
+                            <span class="legend-item bit-active-pa5">Bits [11:10]: MODER5 (01 = Output Mode PA5)</span>
+                        </div>
+                    </div>
+
+                    <!-- Register 3: GPIOA->ODR -->
+                    <div class="register-block" data-reg="GPIOA_ODR">
+                        <div class="reg-title-bar">
+                            <span class="reg-name">GPIOA->ODR</span>
+                            <span class="reg-addr">Base: 0x40020000 | Offset: 0x14</span>
+                            <span class="reg-hex" id="hex-GPIOA_ODR">0x00000020</span>
+                        </div>
+                        <div class="bit-field-grid" id="bits-GPIOA_ODR"></div>
+                        <div class="reg-legend">
+                            <span class="legend-item bit-active-odr5">Bit 5: ODR5 (Salida LED PA5)</span>
+                        </div>
+                    </div>
+
+                    <!-- Register 4: GPIOC->MODER -->
+                    <div class="register-block" data-reg="GPIOC_MODER">
+                        <div class="reg-title-bar">
+                            <span class="reg-name">GPIOC->MODER</span>
+                            <span class="reg-addr">Base: 0x40020800 | Offset: 0x00</span>
+                            <span class="reg-hex" id="hex-GPIOC_MODER">0x00000000</span>
+                        </div>
+                        <div class="bit-field-grid" id="bits-GPIOC_MODER"></div>
+                        <div class="reg-legend">
+                            <span class="legend-item bit-active-pc13">Bits [27:26]: MODER13 (00 = Input Mode PC13)</span>
+                        </div>
+                    </div>
+
+                    <!-- Register 5: GPIOC->IDR -->
+                    <div class="register-block" data-reg="GPIOC_IDR">
+                        <div class="reg-title-bar">
+                            <span class="reg-name">GPIOC->IDR</span>
+                            <span class="reg-addr">Base: 0x40020800 | Offset: 0x10</span>
+                            <span class="reg-hex" id="hex-GPIOC_IDR">0x00002000</span>
+                        </div>
+                        <div class="bit-field-grid" id="bits-GPIOC_IDR"></div>
+                        <div class="reg-legend">
+                            <span class="legend-item bit-active-idr13">Bit 13: IDR13 (Lectura Pulsador PC13)</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+        <!-- Section 3: Interactive Code & Step-by-Step Lab Guide -->
+        <section class="card code-section">
+            <div class="card-header">
+                <h2>💻 Guía del Taller y Código C (CMSIS Step-by-Step)</h2>
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="tab-setup">Paso a Paso: Configurar CMake</button>
+                    <button class="tab-btn" data-tab="tab-ex1">Ejercicio 1: PA5 (Hola Mundo)</button>
+                    <button class="tab-btn" data-tab="tab-ex2">Ejercicio 2: PC13 (Pulsador B1)</button>
+                    <button class="tab-btn" data-tab="tab-rm">Manual RM0383 Resumen</button>
+                    <button class="tab-btn" data-tab="tab-generator">Generador CMSIS</button>
+                </div>
+            </div>
+
+            <div class="card-body">
+                <!-- Tab Content 0: CMake Setup Step-by-Step -->
+                <div class="tab-content active" id="tab-setup">
+                    <div class="code-explain-layout">
+                        <div class="code-editor-mock">
+                            <div class="editor-header">
+                                <span class="file-name">CMakeLists.txt (Configuración de Rutas y Chip)</span>
+                                <button class="copy-btn" onclick="copyCode('code-cmake-setup')">📋 Copiar Configuración</button>
+                            </div>
+                            <pre><code id="code-cmake-setup"><span class="line-comment"># =========================================================================</span>
+<span class="line-comment"># 1. INCLUIR RUTAS DE CABECERAS CMSIS (target_include_directories)</span>
+<span class="line-comment"># =========================================================================</span>
+<span class="code-highlight">target_include_directories(${PROJECT_NAME} PRIVATE</span>
+  <span class="line-comment"># Ruta 1: Drivers CMSIS genéricos de ARM Cortex-M</span>
+  <span class="code-highlight">"/home/mgz/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Include"</span>
+
+  <span class="line-comment"># Ruta 2: Drivers CMSIS específicos de ST para la serie STM32F4xx</span>
+  <span class="code-highlight">"/home/mgz/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Include"</span>
+
+  <span class="line-comment"># Ruta 3: Cabeceras propias del proyecto en carpeta Inc/</span>
+  "${CMAKE_CURRENT_SOURCE_DIR}/Inc"
+)
+
+<span class="line-comment"># =========================================================================</span>
+<span class="line-comment"># 2. DEFINIR MACRO DEL MICROCONTROLADOR (target_compile_definitions)</span>
+<span class="line-comment"># =========================================================================</span>
+<span class="code-highlight">target_compile_definitions(${PROJECT_NAME} PRIVATE</span>
+  <span class="code-highlight">STM32F411xE</span>
+)</code></pre>
+                        </div>
+                        <div class="explain-panel">
+                            <h3>⚙️ Guía de Configuración CMake Paso a Paso</h3>
+                            <ul class="explain-list">
+                                <li><strong>Paso 1 - Abrir CMakeLists.txt:</strong> Abre el archivo en la raíz del proyecto VS Code.</li>
+                                <li><strong>Paso 2 - target_include_directories:</strong> Añade la ruta a <code>Drivers/CMSIS/Include</code> y a <code>Drivers/CMSIS/Device/ST/STM32F4xx/Include</code> para resolver los <code>#include &lt;stm32f4xx.h&gt;</code>.</li>
+                                <li><strong>Paso 3 - target_compile_definitions:</strong> Agrega la macro <code>STM32F411xE</code>. Esto le indica a los archivos CMSIS qué registros e interrupciones habilitar para el STM32F411RE.</li>
+                                <li><strong>Paso 4 - Reconfigurar:</strong> Presiona <code>Ctrl + Shift + P</code> $\rightarrow$ <code>CMake: Configure</code> para aplicar los cambios y limpiar errores de IntelliSense.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content 1: Exercise 1 -->
+                <div class="tab-content" id="tab-ex1">
+                    <div class="code-explain-layout">
+                        <div class="code-editor-mock">
+                            <div class="editor-header">
+                                <span class="file-name">Src/main.c (Hola Mundo PA5)</span>
+                                <button class="copy-btn" onclick="copyCode('code-ex1')">📋 Copiar Código</button>
+                            </div>
+                            <pre><code id="code-ex1"><span class="line-comment">// 1. Habilitar reloj de GPIOA</span>
+<span class="code-highlight reg-rcc">RCC->AHB1ENR |= (1 << 0);</span>
+
+<span class="line-comment">// 2. Configurar PA5 como Salida en MODER (bits 11:10 = 01)</span>
+<span class="code-highlight reg-moder">GPIOA->MODER &= ~(0b11 << (5 * 2));</span> <span class="line-comment">// Limpiar bits</span>
+<span class="code-highlight reg-moder">GPIOA->MODER |=  (0b01 << (5 * 2));</span> <span class="line-comment">// Asignar 01</span>
+
+<span class="line-comment">// 3. Configurar Push-Pull y Low Speed</span>
+GPIOA->OTYPER  &= ~(1 << 5);
+GPIOA->OSPEEDR &= ~(0b11 << (5 * 2));
+GPIOA->PUPDR   &= ~(0b11 << (5 * 2));
+
+<span class="line-comment">// 4. Encender LED escribiendo en ODR</span>
+<span class="code-highlight reg-odr">GPIOA->ODR |= (1 << 5);</span></code></pre>
+                        </div>
+                        <div class="explain-panel">
+                            <h3>🔍 Explicación Paso a Paso</h3>
+                            <ul class="explain-list">
+                                <li><strong>Habilitar Reloj:</strong> Sin activar <code>RCC->AHB1ENR |= (1 << 0)</code>, el puerto GPIOA se encuentra desenergizado y cualquier lectura/escritura fallará.</li>
+                                <li><strong>Cálculo del Desplazamiento:</strong> Cada pin ocupa 2 bits en MODER. Para el pin 5: $5 \times 2 = 10$. Desplazamos `0b01` 10 posiciones a la izquierda.</li>
+                                <li><strong>Máscara de Limpieza `&= ~`:</strong> Limpiamos los bits antes de escribir para asegurar que no queden valores previos ruidosos.</li>
+                                <li><strong>Escritura en ODR:</strong> <code>GPIOA->ODR |= (1 << 5)</code> coloca el bit 5 en nivel alto (3.3V), encendiendo el LED verde.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content 2: Exercise 2 -->
+                <div class="tab-content" id="tab-ex2">
+                    <div class="code-explain-layout">
+                        <div class="code-editor-mock">
+                            <div class="editor-header">
+                                <span class="file-name">Src/main.c (Pulsador PC13)</span>
+                                <button class="copy-btn" onclick="copyCode('code-ex2')">📋 Copiar Código</button>
+                            </div>
+                            <pre><code id="code-ex2"><span class="line-comment">// 1. Habilitar reloj de GPIOA y GPIOC</span>
+RCC->AHB1ENR |= (1 << 0); <span class="line-comment">// GPIOA</span>
+RCC->AHB1ENR |= (1 << 2); <span class="line-comment">// GPIOC</span>
+
+<span class="line-comment">// 2. PA5 Salida (LED LD2)</span>
+GPIOA->MODER &= ~(0b11 << (5 * 2));
+GPIOA->MODER |=  (0b01 << (5 * 2));
+
+<span class="line-comment">// 3. PC13 Entrada (Pulsador B1) (bits 27:26 = 00)</span>
+<span class="code-highlight reg-pc-moder">GPIOC->MODER &= ~(0b11 << (13 * 2));</span>
+
+<span class="line-comment">// 4. Bucle Principal de Lectura</span>
+while (1) {
+    <span class="line-comment">// Evaluamos el bit 13 en IDR (Active-Low: 0 = Presionado)</span>
+    <span class="code-highlight reg-idr">if ((GPIOC->IDR & (1 << 13)) == 0)</span> {
+        GPIOA->ODR |= (1 << 5);  <span class="line-comment">// Boton presionado -> LED encendido</span>
+    } else {
+        GPIOA->ODR &= ~(1 << 5); <span class="line-comment">// Boton suelto -> LED apagado</span>
+    }
+}</code></pre>
+                        </div>
+                        <div class="explain-panel">
+                            <h3>⚡ Lógica Active-Low del Botón B1</h3>
+                            <ul class="explain-list">
+                                <li><strong>Pull-up Externo:</strong> El botón B1 en la NUCLEO-F411RE tiene una resistencia que lo mantiene en <strong>3.3V (1 lógico)</strong> en reposo.</li>
+                                <li><strong>Contacto a GND:</strong> Al presionar el botón, el circuito cierra a tierra (0V), leyendo un <strong>0 lógico</strong> en <code>GPIOC->IDR</code> bit 13.</li>
+                                <li><strong>Máscara de Lectura:</strong> <code>(GPIOC->IDR & (1 << 13))</code> aísla el bit 13 e ignora los demás pines de GPIOC.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content 3: RM0383 Reference Manual Explorer -->
+                <div class="tab-content" id="tab-rm">
+                    <div class="rm-explorer">
+                        <h3>📚 Mapa de Memoria y Direcciones Base (Manual RM0383)</h3>
+                        <table class="rm-table">
+                            <thead>
+                                <tr>
+                                    <th>Periférico</th>
+                                    <th>Bus</th>
+                                    <th>Dirección Base</th>
+                                    <th>Registro Clave</th>
+                                    <th>Offset</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>RCC</strong></td>
+                                    <td>AHB1</td>
+                                    <td><code>0x4002 3800</code></td>
+                                    <td><code>RCC_AHB1ENR</code></td>
+                                    <td><code>0x30</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>GPIOA</strong></td>
+                                    <td>AHB1</td>
+                                    <td><code>0x4002 0000</code></td>
+                                    <td><code>GPIOA_MODER</code> / <code>ODR</code></td>
+                                    <td><code>0x00</code> / <code>0x14</code></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>GPIOC</strong></td>
+                                    <td>AHB1</td>
+                                    <td><code>0x4002 0800</code></td>
+                                    <td><code>GPIOC_MODER</code> / <code>IDR</code></td>
+                                    <td><code>0x00</code> / <code>0x10</code></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <div class="bit-op-card">
+                            <h4>🧮 Calculadora Rápida de Operaciones de Bits C</h4>
+                            <div class="calc-grid">
+                                <div class="calc-inputs">
+                                    <label>Operación:
+                                        <select id="calc-op">
+                                            <option value="set">Set Bit |= (1 << N)</option>
+                                            <option value="clear">Clear Bits &= ~(3 << N*2)</option>
+                                            <option value="toggle">Toggle Bit ^= (1 << N)</option>
+                                        </select>
+                                    </label>
+                                    <label>Pin N (0..15):
+                                        <input type="number" id="calc-pin" min="0" max="15" value="5">
+                                    </label>
+                                </div>
+                                <div class="calc-output">
+                                    <span>Resultado generado en C:</span>
+                                    <code id="calc-result-code">REG |= (1 << 5); // 0x00000020</code>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content 4: Code Generator -->
+                <div class="tab-content" id="tab-generator">
+                    <div class="generator-layout">
+                        <div class="gen-controls">
+                            <h3>⚙️ Asistente de Configuración CMSIS</h3>
+                            <div class="form-group">
+                                <label>Puerto GPIO:</label>
+                                <select id="gen-port">
+                                    <option value="GPIOA">GPIOA</option>
+                                    <option value="GPIOB">GPIOB</option>
+                                    <option value="GPIOC" selected>GPIOC</option>
+                                    <option value="GPIOD">GPIOD</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Número de Pin (0-15):</label>
+                                <input type="number" id="gen-pin" min="0" max="15" value="13">
+                            </div>
+                            <div class="form-group">
+                                <label>Modo (MODER):</label>
+                                <select id="gen-mode">
+                                    <option value="00">00: Entrada (Input)</option>
+                                    <option value="01">01: Salida Digital (Output)</option>
+                                    <option value="10">10: Función Alternativa (AF)</option>
+                                    <option value="11">11: Analógico (Analog)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Pull-Up / Pull-Down (PUPDR):</label>
+                                <select id="gen-pupd">
+                                    <option value="00">00: No Pull-up/down</option>
+                                    <option value="01">01: Pull-Up Interna</option>
+                                    <option value="10">10: Pull-Down Interna</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="gen-code-preview">
+                            <div class="editor-header">
+                                <span>Código CMSIS Generado Automáticamente</span>
+                                <button class="copy-btn" onclick="copyCode('gen-output-code')">📋 Copiar</button>
+                            </div>
+                            <pre><code id="gen-output-code">// Generando código...</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>⚡ Taller de Electrónica Digital | STM32F411RE CMSIS Guide | Creado para la comunidad académica</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
