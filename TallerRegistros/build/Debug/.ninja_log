@@ -1,0 +1,21 @@
+# ninja log v7
+6	35	1790177705032629351	CMakeFiles/TallerRegistros.dir/Src/startup_stm32f411xx.S.obj	73e4342ae02a1656
+4	82	1790177705030629350	CMakeFiles/TallerRegistros.dir/Src/sysmem.c.obj	59be1b4e3106fe7a
+1	91	1790177705027629350	CMakeFiles/TallerRegistros.dir/Src/syscall.c.obj	9475938434a40b68
+1	46	1790177731584631619	CMakeFiles/TallerRegistros.dir/Src/main.c.obj	e1be295fa052000d
+46	77	1790177731629631623	TallerRegistros.elf	a0e52609c74a4f4b
+2	27	1790179607183242192	CMakeFiles/TallerRegistros.dir/Src/startup_stm32f411xx.S.obj	3fa40ba729bda5dd
+1	37	1790179607182821418	CMakeFiles/TallerRegistros.dir/Src/sysmem.c.obj	abe649aa32209792
+1	104	1790179607181791888	CMakeFiles/TallerRegistros.dir/Src/syscall.c.obj	fb52a9e91809d5f2
+1	71	1790179637424794472	CMakeFiles/TallerRegistros.dir/Src/main.c.obj	4731872b3e5e54f7
+71	99	1790179637494794478	TallerRegistros.elf	a0e52609c74a4f4b
+1	77	1790179875198814790	CMakeFiles/TallerRegistros.dir/Src/main.c.obj	4731872b3e5e54f7
+77	103	1790179875275814796	TallerRegistros.elf	a0e52609c74a4f4b
+1	82	1790179915401818225	CMakeFiles/TallerRegistros.dir/Src/main.c.obj	4731872b3e5e54f7
+82	108	1790179915482818232	TallerRegistros.elf	a0e52609c74a4f4b
+0	81	1790180810983894752	CMakeFiles/TallerRegistros.dir/Src/main.c.obj	4731872b3e5e54f7
+81	104	1790180811064894759	TallerRegistros.elf	a0e52609c74a4f4b
+2	87	1790180892869901749	CMakeFiles/TallerRegistros.dir/Src/main.c.obj	4731872b3e5e54f7
+87	112	1790180892954901756	TallerRegistros.elf	a0e52609c74a4f4b
+1	94	1790181140258922888	CMakeFiles/TallerRegistros.dir/Src/main.c.obj	4731872b3e5e54f7
+94	118	1790181140351922896	TallerRegistros.elf	a0e52609c74a4f4b

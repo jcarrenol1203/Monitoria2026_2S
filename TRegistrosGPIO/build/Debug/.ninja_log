@@ -1,0 +1,8 @@
+# ninja log v7
+2	43	1790696783317323655	CMakeFiles/TRegistrosGPIO.dir/Src/startup_stm32f411xx.S.obj	9ca33de4e43ca207
+1	80	1790696783315388483	CMakeFiles/TRegistrosGPIO.dir/Src/sysmem.c.obj	1644768e2e49f52d
+0	95	1790696783314388483	CMakeFiles/TRegistrosGPIO.dir/Src/syscall.c.obj	6f37b73fe0f72ba2
+2	115	1790696783316388483	CMakeFiles/TRegistrosGPIO.dir/Src/main.c.obj	7af57fc187e55bce
+115	138	1790696783429388493	TRegistrosGPIO.elf	ba4aa3fe0048e39
+1	60	1790707508268304922	CMakeFiles/TRegistrosGPIO.dir/Src/main.c.obj	7af57fc187e55bce
+60	81	1790707508327304927	TRegistrosGPIO.elf	ba4aa3fe0048e39

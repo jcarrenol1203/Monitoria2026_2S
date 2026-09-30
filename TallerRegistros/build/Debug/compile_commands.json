@@ -1,0 +1,26 @@
+[
+{
+  "directory": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug",
+  "command": "/home/jacl/snap/code/262/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc -DDEBUG -DRTE_DEVICE_STARTUP_STM32F4XX -DSTM32F411xE -I/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Inc -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Include -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Include -fdata-sections -ffunction-sections -Wl,--gc-sections -Wno-comment -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mlittle-endian -mthumb -std=gnu11 -fstack-usage -Wall -Wextra -Wpedantic -Wno-unused-parameter -O0 -g3 -ggdb -o CMakeFiles/TallerRegistros.dir/Src/syscall.c.obj -c /home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/syscall.c",
+  "file": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/syscall.c",
+  "output": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug/CMakeFiles/TallerRegistros.dir/Src/syscall.c.obj"
+},
+{
+  "directory": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug",
+  "command": "/home/jacl/snap/code/262/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc -DDEBUG -DRTE_DEVICE_STARTUP_STM32F4XX -DSTM32F411xE -I/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Inc -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Include -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Include -fdata-sections -ffunction-sections -Wl,--gc-sections -Wno-comment -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mlittle-endian -mthumb -std=gnu11 -fstack-usage -Wall -Wextra -Wpedantic -Wno-unused-parameter -O0 -g3 -ggdb -o CMakeFiles/TallerRegistros.dir/Src/sysmem.c.obj -c /home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/sysmem.c",
+  "file": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/sysmem.c",
+  "output": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug/CMakeFiles/TallerRegistros.dir/Src/sysmem.c.obj"
+},
+{
+  "directory": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug",
+  "command": "/home/jacl/snap/code/262/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc -DDEBUG -DRTE_DEVICE_STARTUP_STM32F4XX -DSTM32F411xE -I/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Inc -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Include -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Include -fdata-sections -ffunction-sections -Wl,--gc-sections -Wno-comment -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mlittle-endian -mthumb -std=gnu11 -fstack-usage -Wall -Wextra -Wpedantic -Wno-unused-parameter -O0 -g3 -ggdb -o CMakeFiles/TallerRegistros.dir/Src/main.c.obj -c /home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/main.c",
+  "file": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/main.c",
+  "output": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug/CMakeFiles/TallerRegistros.dir/Src/main.c.obj"
+},
+{
+  "directory": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug",
+  "command": "/home/jacl/snap/code/262/.local/share/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc -DDEBUG -DRTE_DEVICE_STARTUP_STM32F4XX -DSTM32F411xE -I/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Inc -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Include -I/home/jacl/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Include -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mlittle-endian -mthumb -std=gnu11 -fstack-usage -Wall -Wextra -Wpedantic -Wno-unused-parameter -O0 -g3 -ggdb -x assembler-with-cpp -MMD -MP -o CMakeFiles/TallerRegistros.dir/Src/startup_stm32f411xx.S.obj -c /home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/startup_stm32f411xx.S",
+  "file": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/Src/startup_stm32f411xx.S",
+  "output": "/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug/CMakeFiles/TallerRegistros.dir/Src/startup_stm32f411xx.S.obj"
+}
+]

@@ -1,0 +1,3 @@
+/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug/CMakeFiles/TallerRegistros.dir
+/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug/CMakeFiles/edit_cache.dir
+/home/jacl/Documentos/MonitoriaCompartida2026_2S/TallerRegistros/build/Debug/CMakeFiles/rebuild_cache.dir
