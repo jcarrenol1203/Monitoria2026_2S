@@ -7,7 +7,6 @@
  ******************************************************************************
  */
 
-#include "stm32f411xe.h"
 #include <stm32f4xx.h>
 #include <stdint.h>
 
@@ -17,14 +16,14 @@ int main(void)
 {
     
     /* =========================================================================
-     * PASO 1: HABILITAR RELOJES DE GPIOB Y GPIOC (RCC->AHB1ENR)
+     * PASO 1: HABILITAR RELOJES DE GPIOB (RCC->AHB1ENR)
      * Manual de Referencia RM0383 - Seccion 6.3.9
      * ========================================================================= */
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN; // Habilitar señal de reloj para GPIOB (Bit 1)
     /* =========================================================================
-     * PASO 2: CONFIGURAR PB8, PC8 Y PC9 COMO SALIDA PUSH-PULL, BAJA VELOCIDAD
+     * PASO 2: CONFIGURAR PB8, PB9 Y PB6 COMO SALIDA PUSH-PULL, BAJA VELOCIDAD
      * (No se toca PUPDR: las resistencias ya están puestas en el protoboard)
-     * Manual de Referencia RM0383 - Seccion 8.4
+     * Manual de Referencia RM0>383 - Seccion 8.4
      * ========================================================================= */
     /*
     Verde
@@ -39,29 +38,29 @@ int main(void)
      /*
      Amarillo
      */
-     GPIOB->MODER    &= ~ (GPIO_MODER_MODE9); // Limpiar bits de modo para PC9;
-     GPIOB->MODER    |=  (GPIO_MODER_MODE9_0); // Configurar PC9 como salida (general purpose output)
-     GPIOB->OTYPER   &= ~ GPIO_OTYPER_OT9; // Configurar PC9 como salida push-pull
-     GPIOB->OSPEEDR  &= ~ (GPIO_OSPEEDR_OSPEED9); // Configurar PC9 como baja velocidad
-     GPIOB->PUPDR    &= ~ (GPIO_PUPDR_PUPD9); // Configurar PC9 sin pull-up/pull-down
+     GPIOB->MODER    &= ~ (GPIO_MODER_MODE9); // Limpiar bits de modo para PB9;
+     GPIOB->MODER    |=  (GPIO_MODER_MODE9_0); // Configurar PB9 como salida (general purpose output)
+     GPIOB->OTYPER   &= ~ GPIO_OTYPER_OT9; // Configurar PB9 como salida push-pull
+     GPIOB->OSPEEDR  &= ~ (GPIO_OSPEEDR_OSPEED9); // Configurar PB9 como baja velocidad
+     GPIOB->PUPDR    &= ~ (GPIO_PUPDR_PUPD9); // Configurar PB9 sin pull-up/pull-down
      GPIOB->ODR      &= ~ (GPIO_ODR_OD9); // Inicializar PC9 en bajo
 
      /*
      Rojo
      */
-     GPIOB->MODER    &= ~ (GPIO_MODER_MODE6); // Limpiar bits de modo para PC9;
-     GPIOB->MODER    |=  (GPIO_MODER_MODE6_0); // Configurar PC9 como salida (general purpose output)
-     GPIOB->OTYPER   &= ~ GPIO_OTYPER_OT6; // Configurar PC9 como salida push-pull
-     GPIOB->OSPEEDR  &= ~ (GPIO_OSPEEDR_OSPEED6); // Configurar PC9 como baja velocidad
-     GPIOB->PUPDR    &= ~ (GPIO_PUPDR_PUPD6); // Configurar PC9 sin pull-up/pull-down
-     GPIOB->ODR      &= ~ (GPIO_ODR_OD6); // Inicializar PC9 en bajo
+     GPIOB->MODER    &= ~ (GPIO_MODER_MODE6); // Limpiar bits de modo para PB6;
+     GPIOB->MODER    |=  (GPIO_MODER_MODE6_0); // Configurar PB6 como salida (general purpose output)
+     GPIOB->OTYPER   &= ~ GPIO_OTYPER_OT6; // Configurar PB6 como salida push-pull
+     GPIOB->OSPEEDR  &= ~ (GPIO_OSPEEDR_OSPEED6); // Configurar PB6 como baja velocidad
+     GPIOB->PUPDR    &= ~ (GPIO_PUPDR_PUPD6); // Configurar PB6 sin pull-up/pull-down
+     GPIOB->ODR      &= ~ (GPIO_ODR_OD6); // Inicializar PB6 en bajo
 
 
 
     
 
     /* =========================================================================
-     * PASO 3: CONFIGURAR EL SYSTICK PARA QUE CUENTE 500 ms, SIN INTERRUPCIONES
+     * PASO 3: CONFIGURAR EL SYSTICK PARA QUE CUENTE 1000 ms, SIN INTERRUPCIONES
      * (Core Cortex-M4 - core_cm4.h)
      * ========================================================================= */
     SysTick->LOAD = 16000000 - 1;      // Valor de recarga del contador
