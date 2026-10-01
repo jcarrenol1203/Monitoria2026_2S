@@ -7,73 +7,70 @@
  ******************************************************************************
  */
 
+#include "stm32f411xe.h"
 #include <stm32f4xx.h>
 #include <stdint.h>
 
-/* Pines de los 3 LEDs del semáforo (resistencias externas ya puestas físicamente,
- * por eso no se configura PUPDR para ninguno de estos pines). */
-#define LED_VERDE_PORT      GPIOA
-#define LED_VERDE_PIN       5   // PB8
-
-#define LED_AMARILLO_PORT   GPIOC
-#define LED_AMARILLO_PIN    8   // PC8
-
-#define LED_ROJO_PORT       GPIOC
-#define LED_ROJO_PIN        9   // PC9
-
-/* HCLK = 16 MHz (HSI interno, valor de reset; no se llama SystemClock_Config). */
-#define SYSTICK_RELOAD_500MS (8000000UL - 1UL)
-
-/* Estados del semáforo (switch-case simple, todavía sin máquina de estados) */
-#define ESTADO_VERDE     0
-#define ESTADO_AMARILLO  1
-#define ESTADO_ROJO      2
-
-static void semaforo_ApagarTodos(void);
+uint8_t estado_actual = 0; 
 
 int main(void)
 {
-    uint8_t estado_actual = ESTADO_VERDE;
-
+    
     /* =========================================================================
      * PASO 1: HABILITAR RELOJES DE GPIOB Y GPIOC (RCC->AHB1ENR)
      * Manual de Referencia RM0383 - Seccion 6.3.9
      * ========================================================================= */
-    RCC->AHB1ENR |= (1 << 0); // Habilitar señal de reloj para GPIOB (Bit 1)
-    RCC->AHB1ENR |= (1 << 2); // Habilitar señal de reloj para GPIOC (Bit 2)
-
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN; // Habilitar señal de reloj para GPIOB (Bit 1)
     /* =========================================================================
      * PASO 2: CONFIGURAR PB8, PC8 Y PC9 COMO SALIDA PUSH-PULL, BAJA VELOCIDAD
      * (No se toca PUPDR: las resistencias ya están puestas en el protoboard)
      * Manual de Referencia RM0383 - Seccion 8.4
      * ========================================================================= */
-    LED_VERDE_PORT->MODER    &= ~(0b11 << (LED_VERDE_PIN * 2));
-    LED_VERDE_PORT->MODER    |=  (0b01 << (LED_VERDE_PIN * 2));
-    LED_VERDE_PORT->OTYPER   &= ~(1 << LED_VERDE_PIN);
-    LED_VERDE_PORT->OSPEEDR  &= ~(0b11 << (LED_VERDE_PIN * 2));
+    /*
+    Verde
+    */
+     GPIOB->MODER    &= ~ (GPIO_MODER_MODE8); // Limpiar bits de modo para PB8;
+     GPIOB->MODER    |=  (GPIO_MODER_MODE8_0); // Configurar PB8 como salida (general purpose output)
+     GPIOB->OTYPER   &= ~ GPIO_OTYPER_OT8; // Configurar PB8 como salida push-pull
+     GPIOB->OSPEEDR  &= ~ (GPIO_OSPEEDR_OSPEED8); // Configurar PB8 como baja velocidad
+     GPIOB->PUPDR    &= ~ (GPIO_PUPDR_PUPD8); // Configurar PB8 sin pull-up/pull-down
+     GPIOB->ODR      &= ~ (GPIO_ODR_OD8); // Inicializar PB8 en bajo
 
-    LED_AMARILLO_PORT->MODER   &= ~(0b11 << (LED_AMARILLO_PIN * 2));
-    LED_AMARILLO_PORT->MODER   |=  (0b01 << (LED_AMARILLO_PIN * 2));
-    LED_AMARILLO_PORT->OTYPER  &= ~(1 << LED_AMARILLO_PIN);
-    LED_AMARILLO_PORT->OSPEEDR &= ~(0b11 << (LED_AMARILLO_PIN * 2));
+     /*
+     Amarillo
+     */
+     GPIOB->MODER    &= ~ (GPIO_MODER_MODE9); // Limpiar bits de modo para PC9;
+     GPIOB->MODER    |=  (GPIO_MODER_MODE9_0); // Configurar PC9 como salida (general purpose output)
+     GPIOB->OTYPER   &= ~ GPIO_OTYPER_OT9; // Configurar PC9 como salida push-pull
+     GPIOB->OSPEEDR  &= ~ (GPIO_OSPEEDR_OSPEED9); // Configurar PC9 como baja velocidad
+     GPIOB->PUPDR    &= ~ (GPIO_PUPDR_PUPD9); // Configurar PC9 sin pull-up/pull-down
+     GPIOB->ODR      &= ~ (GPIO_ODR_OD9); // Inicializar PC9 en bajo
 
-    LED_ROJO_PORT->MODER    &= ~(0b11 << (LED_ROJO_PIN * 2));
-    LED_ROJO_PORT->MODER    |=  (0b01 << (LED_ROJO_PIN * 2));
-    LED_ROJO_PORT->OTYPER   &= ~(1 << LED_ROJO_PIN);
-    LED_ROJO_PORT->OSPEEDR  &= ~(0b11 << (LED_ROJO_PIN * 2));
+     /*
+     Rojo
+     */
+     GPIOB->MODER    &= ~ (GPIO_MODER_MODE6); // Limpiar bits de modo para PC9;
+     GPIOB->MODER    |=  (GPIO_MODER_MODE6_0); // Configurar PC9 como salida (general purpose output)
+     GPIOB->OTYPER   &= ~ GPIO_OTYPER_OT6; // Configurar PC9 como salida push-pull
+     GPIOB->OSPEEDR  &= ~ (GPIO_OSPEEDR_OSPEED6); // Configurar PC9 como baja velocidad
+     GPIOB->PUPDR    &= ~ (GPIO_PUPDR_PUPD6); // Configurar PC9 sin pull-up/pull-down
+     GPIOB->ODR      &= ~ (GPIO_ODR_OD6); // Inicializar PC9 en bajo
+
+
+
+    
 
     /* =========================================================================
      * PASO 3: CONFIGURAR EL SYSTICK PARA QUE CUENTE 500 ms, SIN INTERRUPCIONES
      * (Core Cortex-M4 - core_cm4.h)
      * ========================================================================= */
-    SysTick->LOAD = SYSTICK_RELOAD_500MS;      // Valor de recarga del contador
+    SysTick->LOAD = 16000000 - 1;      // Valor de recarga del contador
     SysTick->VAL  = 0;                         // Reinicia el contador actual
-    SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk // Reloj del procesador (16 MHz)
-                  | SysTick_CTRL_ENABLE_Msk;   // Habilita el SysTick
-                                                // (TICKINT en 0: sin interrupción)
+    SysTick->CTRL &= ~(SysTick_CTRL_CLKSOURCE_Msk); // Deshabilitar interrupciones del Systick
+    SysTick->CTRL |= (SysTick_CTRL_CLKSOURCE_Msk); // Seleccionar reloj del procesador (16 MHz)
 
-    semaforo_ApagarTodos();
-    LED_VERDE_PORT->ODR |= (1 << LED_VERDE_PIN); // Arranca en verde
+    SysTick->CTRL &= ~SysTick_CTRL_ENABLE_Msk; // Deshabilitar el contador del Systick
+    SysTick->CTRL |= SysTick_CTRL_ENABLE_Msk; // Habilitar el contador del Systick
 
     /* =========================================================================
      * BUCLE PRINCIPAL (SUPER LOOP)
@@ -84,36 +81,36 @@ int main(void)
         // y se limpia automaticamente al leer CTRL.
         if (SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk)
         {
-            semaforo_ApagarTodos();
 
             switch (estado_actual)
             {
-                case ESTADO_VERDE:
-                    LED_AMARILLO_PORT->ODR |= (1 << LED_AMARILLO_PIN);
-                    estado_actual = ESTADO_AMARILLO;
+                case 0:
+                    GPIOB->ODR |= (GPIO_ODR_OD8); // Encender LED verde
+                    GPIOB->ODR &= ~(GPIO_ODR_OD9); // Apagar LED amarillo
+                    GPIOB->ODR &= ~(GPIO_ODR_OD6); // Apagar LED rojo
+                    estado_actual ++;
                     break;
 
-                case ESTADO_AMARILLO:
-                    LED_ROJO_PORT->ODR |= (1 << LED_ROJO_PIN);
-                    estado_actual = ESTADO_ROJO;
+                case 1:
+                    GPIOB->ODR |= (GPIO_ODR_OD9); // Encender LED amarillo
+                    GPIOB->ODR &= ~(GPIO_ODR_OD8); // Apagar LED verde
+                    GPIOB->ODR &= ~(GPIO_ODR_OD6); // Apagar LED rojo
+                    estado_actual ++;
+                   
                     break;
+                   
 
-                case ESTADO_ROJO:
-                    LED_VERDE_PORT->ODR |= (1 << LED_VERDE_PIN);
-                    estado_actual = ESTADO_VERDE;
+                case 2:
+                    GPIOB->ODR &= ~(GPIO_ODR_OD8); // Apagar LED verde
+                    GPIOB->ODR &= ~(GPIO_ODR_OD9); // Apagar LED amarillo
+                    GPIOB->ODR |= (GPIO_ODR_OD6); // Encender LED rojo
+                    estado_actual = 0;
                     break;
 
                 default:
-                    estado_actual = ESTADO_VERDE;
+                    estado_actual = 0;
                     break;
             }
         }
     }
-}
-
-static void semaforo_ApagarTodos(void)
-{
-    LED_VERDE_PORT->ODR    &= ~(1 << LED_VERDE_PIN);
-    LED_AMARILLO_PORT->ODR &= ~(1 << LED_AMARILLO_PIN);
-    LED_ROJO_PORT->ODR     &= ~(1 << LED_ROJO_PIN);
 }
