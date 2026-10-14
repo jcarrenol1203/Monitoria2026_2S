@@ -728,8 +728,7 @@ void set_segments(void){
 Event_t get_next_event(void){
 	Event_t ev = EV_NONE;
 
-	//Sección crítica: leer y borrar la bandera no debe ser interrumpido o se podría perder un evento
-	__disable_irq();
+	//Lee las banderas volatiles que dejaron las ISR y las convierte en un evento (una por llamada)
 	if (increment_counter == 1){
 		increment_counter = 0; //Vuelve la variable volatil a 0 para que no se sobreescriba, indicando que ya fue atendida la ISR del EXTI0
 		ev = EV_F2_FALLING;
@@ -740,7 +739,6 @@ Event_t get_next_event(void){
 		request_isrtim = 0; //VUelve el valor a 0 para que no se sobreescriba y vuelva al ciclo, indicando que ya se atendio la ISR del TIM3
 		ev = EV_TIM3_TICK;
 	}
-	__enable_irq();
 
 	return ev;
 }
