@@ -3,7 +3,8 @@
  * @file           : main.c
  * @author         : Miguel A. Bedoya Gonzalez --> mibedoyag@unal.edu.co
  * @brief          : Taller PWM - Encoder KY040 (TIM2) controla el duty y el
- *                   pulsador (EXTI0) cambia la frecuencia del PWM (TIM1)
+ *                   pulsador (EXTI0) cambia la frecuencia del PWM (TIM1),
+ *                   organizado como una Máquina de Estados Finitos (FSM)
  ******************************************************************************
  * @attention
  *
@@ -23,8 +24,8 @@
  * - CH1 (KY040: CLK) -> PA0
  * - CH2 (KY040: DT)  -> PA1
  *
- ** PULSADOR KY040 (SW), activo en bajo, con filtro RC externo a GND:
- * - SW_USE_TIM2_CH3 = 0 -> PB0 (EXTI0)               [por defecto]
+ ** PULSADOR KY040 (SW), activo en bajo, con filtro RC externo (100 nF a GND):
+ * - SW_USE_TIM2_CH3 = 0 -> PB0 (EXTI0)                        [por defecto]
  * - SW_USE_TIM2_CH3 = 1 -> PA2 (TIM2_CH3 - AF01, captura con filtro IC3F)
  *
  ** BLINKY TIM4 -> PH1 (500 ms)
@@ -33,340 +34,286 @@
  * ===================== FUNCIONAMIENTO ===================== *
  *
  * - TIM2 en modo encoder cuenta los flancos de CLK y DT (4 cuentas por paso).
- *   El contador se divide entre 4 y se satura entre 0 y 100, ese valor es el
- *   duty cycle en porcentaje.
+ *   La cuenta se divide entre 4 y se satura entre 0 y 100: es el duty en %.
  *
- * - TIM1 genera una senal PWM en PA8. Su frecuencia puede ser 500 Hz, 1 kHz
- *   o 2 kHz (tabla arr_table). El CCR1 se calcula siempre con el ARR actual,
- *   por eso el duty en % se conserva al cambiar de frecuencia.
+ * - TIM1 genera la señal PWM en PA8. Su frecuencia es 500 Hz, 1 kHz o 2 kHz
+ *   (tabla arr_table). El CCR1 se calcula siempre con el ARR actual, por eso el
+ *   duty en % se conserva al cambiar de frecuencia.
  *
  * - Cada flanco de bajada del pulsador pasa a la siguiente frecuencia:
  *   500 Hz -> 1 kHz -> 2 kHz -> 500 Hz ...
- *   Se configura igual que el boton PC13 del taller de EXTI, pero en un pin
- *   cableado al SW del KY040. El rebote lo elimina un filtro RC externo, la ISR
- *   solo levanta una bandera y no espera.
  *
- * - TIM4 hace parpadear el PH1 cada 500 ms para saber que el programa corre.
+ * - TIM4 hace parpadear PH1 cada 500 ms para saber que el programa corre.
  *
- * Reloj del sistema: HSI 16 MHz (sin PLL), los timers reciben 16 MHz.
+ * - Reloj del sistema: HSI 16 MHz (sin PLL), los timers reciben 16 MHz.
+ *
+ *
+ * ===================== FSM (presentación 05-FSM) ===================== *
+ *
+ * Patrón 1: Switch-Case. La FSM decide QUÉ pasa (política), las funciones
+ * driver hacen el CÓMO (hardware). Las ISR solo levantan banderas volatile,
+ * get_next_event() las convierte en un EVENTO y el while(1) nunca se bloquea.
+ *
+ *   Estado actual      Evento               Estado siguiente    Acción [ENTER]
+ *   -----------------  -------------------  ------------------  --------------------------
+ *   STATE_IDLE         EV_ENCODER_CHANGED   STATE_UPDATE_DUTY   -
+ *   STATE_IDLE         EV_BUTTON_PRESS      STATE_CHANGE_FREQ   -
+ *   STATE_IDLE         EV_BLINK_TICK        STATE_BLINK         -
+ *   STATE_UPDATE_DUTY  (incondicional)      STATE_IDLE          pwm_SetDuty(duty_percent)
+ *   STATE_CHANGE_FREQ  (incondicional)      STATE_IDLE          siguiente frecuencia + duty
+ *   STATE_BLINK        (incondicional)      STATE_IDLE          led_Toggle()
+ *   STATE_ERROR        (cualquiera)         STATE_IDLE          recuperación
  *
  ******************************************************************************
  */
 
-#include <stdint.h>
-#include <stm32f4xx.h>
+#include <stdint.h> //Tipos de ancho fijo (uint8_t, int32_t...) para que el tamaño de cada variable sea conocido
+#include <stm32f4xx.h> //CMSIS del STM32F4: define los registros (RCC, GPIOx, TIMx, EXTI...) y sus máscaras de bits
 
-/* Seleccion del pulsador: 0 = EXTI0 en PB0, 1 = captura del TIM2_CH3 en PA2 */
-#define SW_USE_TIM2_CH3	0
+/* Selección del pulsador: 0 = EXTI0 en PB0, 1 = captura del TIM2_CH3 en PA2 */
+#define SW_USE_TIM2_CH3	0 //Con 0 se compila la versión con EXTI, con 1 la versión con captura del canal 3
 
 /* Constantes */
-#define NUM_FREQ		3		// Cantidad de frecuencias disponibles
-#define DUTY_MAX		100		// Duty maximo en %
-#define COUNTS_PER_STEP	4		// El modo TI12 cuenta 4 flancos por paso del encoder
-#define ENCODER_MAX_CNT	(DUTY_MAX * COUNTS_PER_STEP)	// Cuenta maxima del TIM2 (400)
+#define NUM_FREQ		3 //Cantidad de frecuencias disponibles para el PWM (500 Hz, 1 kHz, 2 kHz)
+#define DUTY_MAX		100 //Duty máximo en porcentaje
+#define COUNTS_PER_STEP	4 //El modo TI12 cuenta 4 flancos por cada paso mecánico del encoder
+#define ENCODER_MAX_CNT	(DUTY_MAX * COUNTS_PER_STEP) //Cuenta máxima del TIM2: 100 pasos x 4 cuentas = 400
+
+/* Máquina de estados finitos (FSM) */
+
+/* Paso 1 (FSM): mapear el vocabulario a memoria. Estados y eventos son enum (type safety)
+ * y NUM_STATES / NUM_EVENTS son centinelas para validar rangos. */
+
+//ESTADOS: la condición en la que está el sistema en un instante dado
+typedef enum { //Lista de estados posibles, cada nombre vale un entero (0, 1, 2...)
+	STATE_IDLE, //Reposo: espera un evento sin hacer nada más (no bloquea)
+	STATE_UPDATE_DUTY, //Atiende el giro del encoder: actualiza el duty del PWM
+	STATE_CHANGE_FREQ, //Atiende el pulsador: pasa a la siguiente frecuencia del PWM
+	STATE_BLINK, //Atiende el tick del TIM4: cambia el estado del LED PH1
+	STATE_ERROR, //Estado inválido (trampa de hardware): se recupera hacia STATE_IDLE
+	NUM_STATES //Centinela: cantidad de estados, sirve para validar el rango
+} State_t; //Nombre del tipo: current_state solo puede recibir valores de este enum
+
+//EVENTOS: los disparadores (ISR o lecturas) que provocan transiciones entre estados
+typedef enum { //Lista de eventos posibles, cada nombre vale un entero (0, 1, 2...)
+	EV_NONE, //No ha ocurrido nada
+	EV_ENCODER_CHANGED, //El valor del encoder (en %) cambió respecto al duty actual
+	EV_BUTTON_PRESS, //El pulsador del KY040 fue presionado (flanco de bajada)
+	EV_BLINK_TICK, //Venció el tiempo del TIM4 (500 ms)
+	NUM_EVENTS //Centinela: cantidad de eventos, sirve para validar el rango
+} Event_t; //Nombre del tipo: current_event solo puede recibir valores de este enum
 
 /* Variables */
-volatile uint8_t button_event = 0;	// La ISR del pulsador la pone en 1, el main la atiende y la baja
-uint8_t freq_index = 0;				// Indice de la frecuencia actual en arr_table
-uint8_t duty_percent = 0;			// Duty actual en % (0 - 100)
-const uint16_t arr_table[NUM_FREQ] = {1999, 999, 499};	// ARR para 500 Hz, 1 kHz y 2 kHz con tick de 1 us
 
-/* Maquina de estados */
-typedef enum
-{
-	STATE_READ_ENCODER = 0,
-	STATE_UPDATE_PWM,
-	STATE_CHECK_BUTTON
-} State_t;
+//Estado actual de la FSM, static: solo se accede desde este módulo (scope mínimo) y solo se modifica en main()
+static State_t current_state = STATE_IDLE; //Siempre inicia en reposo
+//Bandera de ENTRY: vale 1 al llegar a un estado para que su acción [ENTER] se ejecute exactamente una vez
+static uint8_t state_entry_flag = 1; //Inicia en 1 para que el primer estado también ejecute su [ENTER]
 
-State_t current_state = STATE_READ_ENCODER;	// Siempre arranca leyendo el encoder
+volatile uint8_t button_flag = 0; //Bandera que deja la ISR del pulsador (volatile: cambia fuera del flujo normal del programa)
+volatile uint8_t blink_flag = 0; //Bandera que deja la ISR del TIM4 (volatile por la misma razón)
 
-/* Definicion de funciones */
-static void gpio_Init(void);			// GPIOH PH1 como salida (blinky)
-static void tim4_Init(void);			// TIM4 con interrupcion cada 500 ms (blinky)
-static void tim1_pwm_Init(void);		// GPIOA PA8 + TIM1 CH1 en modo PWM 1
-static void tim2_encoder_Init(void);	// GPIOA PA0, PA1 + TIM2 en modo encoder
-#if SW_USE_TIM2_CH3
-static void sw_tim2ch3_Config(void);	// GPIOA PA2 + canal 3 del TIM2 como captura con filtro
+uint8_t freq_index = 0; //Índice de la frecuencia actual dentro de arr_table
+uint8_t duty_percent = 0; //Duty actual del PWM en porcentaje (0 - 100)
+const uint16_t arr_table[NUM_FREQ] = {1999, 999, 499}; //ARR para 500 Hz, 1 kHz y 2 kHz con tick de 1 us, const: vive en la Flash
+
+/* Definición de funciones */
+
+//Drivers de la FSM (el CÓMO)
+static Event_t get_next_event(void); //Lee (y limpia) las banderas de las ISR y la lectura del encoder, y las convierte en un evento
+static uint8_t encoder_ReadPercent(void); //Lee el TIM2, satura la cuenta entre 0 y 400 y la devuelve como porcentaje (0 - 100)
+static void pwm_SetFrequency(uint8_t index); //Cambia el ARR del TIM1 según arr_table
+static void pwm_SetDuty(uint8_t percent); //Calcula el CCR1 a partir del porcentaje y del ARR actual
+static void led_Toggle(void); //Cambia el estado del LED PH1
+
+//Inicialización del hardware
+static void gpio_Init(void); //GPIOH PH1 como salida (blinky)
+static void tim4_Init(void); //TIM4 con interrupción cada 500 ms (blinky)
+static void tim1_pwm_Init(void); //GPIOA PA8 + TIM1 CH1 en modo PWM 1
+static void tim2_encoder_Init(void); //GPIOA PA0, PA1 + TIM2 en modo encoder
+#if SW_USE_TIM2_CH3 //Compilación condicional: solo existe la versión elegida con SW_USE_TIM2_CH3
+static void sw_tim2ch3_Config(void); //GPIOA PA2 + canal 3 del TIM2 como captura con filtro
 #else
-static void exti0_Init(void);			// GPIOB PB0 + EXTI0 (flanco de bajada)
+static void exti0_Init(void); //GPIOB PB0 + EXTI0 (flanco de bajada)
 #endif
-static void pwm_SetFrequency(uint8_t index);	// Cambia el ARR del TIM1 segun arr_table
-static void pwm_SetDuty(uint8_t percent);		// Calcula el CCR1 a partir del % y el ARR actual
 
 /* Main */
-int main(void)
+int main(void) //Punto de entrada: el startup lo llama después de copiar .data y limpiar .bss
 {
-	int32_t raw_count = 0;	// Cuenta del TIM2 vista con signo
+	Event_t current_event = EV_NONE; //Evento que se evalúa en cada pasada del ciclo infinito
 
-	gpio_Init();
-	tim1_pwm_Init();
-	tim2_encoder_Init();	// Con SW_USE_TIM2_CH3 = 1 tambien configura el pulsador
-#if !SW_USE_TIM2_CH3
-	exti0_Init();
+	gpio_Init(); //Configura PH1 (blinky)
+	tim1_pwm_Init(); //Configura el PWM en PA8
+	tim2_encoder_Init(); //Configura el encoder (con SW_USE_TIM2_CH3 = 1 también configura el pulsador)
+#if !SW_USE_TIM2_CH3 //Solo se llama si el pulsador va por EXTI
+	exti0_Init(); //Configura el pulsador por EXTI0 en PB0
 #endif
-	tim4_Init();			// Ultimo: las interrupciones empiezan con todo listo
+	tim4_Init(); //Último: las interrupciones del blinky empiezan con todo el hardware listo
 
-	while (1)
+	/* Patrón 1 (FSM): Switch-Case. El ciclo infinito nunca termina: lee un evento, evalúa el estado y reacciona.
+	 * Regla de NO bloqueo: no hay delay(), cada pasada procesa a lo sumo UN evento y UNA transición. */
+	while (1) //El firmware nunca termina, gira todo el tiempo evaluando eventos
 	{
-		switch (current_state)
+		if (current_state == STATE_IDLE) //Solo en reposo se consumen eventos: los otros estados duran una pasada y no usan el evento
 		{
-		case STATE_READ_ENCODER:
-			raw_count = (int32_t) TIM2->CNT;	// CNT es de 32 bit sin signo, al girar en CCW desde 0 pasa a 0xFFFFFFFF = -1 con signo
+			current_event = get_next_event(); //Consulta (sin bloquear) si hay un evento pendiente
+		}
+		else //En un estado de atención no se toca ninguna bandera
+		{
+			current_event = EV_NONE; //Si se consumiera aquí, el evento se perdería sin que nadie lo atienda
+		}
 
-			if (raw_count < 0)	// Se paso por debajo de 0, se satura en 0
+		//Safeguard: valida estado y evento antes de usarlos, si alguno está fuera de rango se recupera con STATE_ERROR
+		if ((current_state >= NUM_STATES) || (current_event >= NUM_EVENTS)) //Un valor fuera de rango sólo pasa por corrupción de memoria
+		{
+			current_state = STATE_ERROR; //Se fuerza el estado de error para recuperarse de forma segura
+			state_entry_flag = 1; //El estado de error también ejecuta su [ENTER]
+		}
+
+		switch (current_state) //Despacha al código del estado actual
+		{
+
+		case STATE_IDLE: //Estado de reposo
+			//[ENTER] Corre una sola vez al llegar al estado (aquí no hay nada que preparar)
+			if (state_entry_flag) //Solo es 1 en la primera pasada después de llegar al estado
 			{
-				TIM2->CNT = 0;
-				raw_count = 0;
+				state_entry_flag = 0; //Se baja para que [ENTER] no vuelva a ejecutarse mientras se siga en este estado
 			}
-			else if (raw_count > ENCODER_MAX_CNT)	// Se paso de 100 pasos, se satura en 100
+
+			//[DO] Corre libremente en cada pasada: en reposo no hace nada, solo espera un evento sin bloquear
+
+			//Transiciones: cada evento lleva a un estado distinto
+			if (current_event == EV_ENCODER_CHANGED) //Se giró el encoder
 			{
-				TIM2->CNT = ENCODER_MAX_CNT;
-				raw_count = ENCODER_MAX_CNT;
+				current_state = STATE_UPDATE_DUTY; //[EXIT] No hay acción de salida en este estado
+				state_entry_flag = 1; //Se marca para que el estado nuevo ejecute su [ENTER]
 			}
-
-			duty_percent = (uint8_t) (raw_count / COUNTS_PER_STEP);	// 4 cuentas = 1 paso = 1 %
-			current_state = STATE_UPDATE_PWM;
-			break;
-
-		case STATE_UPDATE_PWM:
-			pwm_SetDuty(duty_percent);
-			current_state = STATE_CHECK_BUTTON;
-			break;
-
-		case STATE_CHECK_BUTTON:
-			if (button_event)
+			else if (current_event == EV_BUTTON_PRESS) //Se presionó el pulsador
 			{
-				button_event = 0;	// Se baja la bandera para esperar otro pulso
-				freq_index = (uint8_t) ((freq_index + 1) % NUM_FREQ);
-				pwm_SetFrequency(freq_index);	// El CCR1 se recalcula en el siguiente ciclo de la FSM
+				current_state = STATE_CHANGE_FREQ; //Pasa a atender el cambio de frecuencia
+				state_entry_flag = 1; //Se marca para que el estado nuevo ejecute su [ENTER]
 			}
-			current_state = STATE_READ_ENCODER;
-			break;
+			else if (current_event == EV_BLINK_TICK) //Pasaron 500 ms del TIM4
+			{
+				current_state = STATE_BLINK; //Pasa a cambiar el LED
+				state_entry_flag = 1; //Se marca para que el estado nuevo ejecute su [ENTER]
+			}
+			break; //Sale del switch, la pasada termina y el while(1) vuelve a empezar
 
-		default:
-			current_state = STATE_READ_ENCODER;
-			break;
+		case STATE_UPDATE_DUTY: //Estado que atiende el giro del encoder
+			//[ENTER] Acción de entrada (Moore): actualiza el duty, exactamente una vez por cada evento del encoder
+			if (state_entry_flag) //Solo la primera pasada después de llegar a este estado
+			{
+				duty_percent = encoder_ReadPercent(); //Lee el valor actual del encoder (0 - 100 %) y lo guarda como duty
+				pwm_SetDuty(duty_percent); //Escribe el CCR1 correspondiente en el TIM1
+				state_entry_flag = 0; //Baja la bandera: la acción ya se ejecutó
+			}
+			//Transición incondicional: la tarea ya fue atendida, se regresa al reposo
+			current_state = STATE_IDLE; //Vuelve a esperar eventos
+			state_entry_flag = 1; //IDLE ejecutará su [ENTER]
+			break; //Fin del estado
+
+		case STATE_CHANGE_FREQ: //Estado que atiende el pulsador
+			//[ENTER] Acción de entrada (Moore): pasa a la siguiente frecuencia, exactamente una vez por cada pulsación
+			if (state_entry_flag) //Solo la primera pasada después de llegar a este estado
+			{
+				freq_index = (uint8_t) ((freq_index + 1) % NUM_FREQ); //Siguiente frecuencia: 0 -> 1 -> 2 -> 0 (el módulo da la vuelta)
+				pwm_SetFrequency(freq_index); //Escribe el ARR nuevo en el TIM1
+				pwm_SetDuty(duty_percent); //Recalcula el CCR1 con el ARR nuevo para conservar el duty en %
+				state_entry_flag = 0; //Baja la bandera: la acción ya se ejecutó
+			}
+			//Transición incondicional: la tarea ya fue atendida, se regresa al reposo
+			current_state = STATE_IDLE; //Vuelve a esperar eventos
+			state_entry_flag = 1; //IDLE ejecutará su [ENTER]
+			break; //Fin del estado
+
+		case STATE_BLINK: //Estado que atiende el tick del TIM4
+			//[ENTER] Acción de entrada (Moore): cambia el LED, exactamente una vez por cada evento del TIM4
+			if (state_entry_flag) //Solo la primera pasada después de llegar a este estado
+			{
+				led_Toggle(); //Invierte el estado de PH1
+				state_entry_flag = 0; //Baja la bandera: la acción ya se ejecutó
+			}
+			//Transición incondicional: la tarea ya fue atendida, se regresa al reposo
+			current_state = STATE_IDLE; //Vuelve a esperar eventos
+			state_entry_flag = 1; //IDLE ejecutará su [ENTER]
+			break; //Fin del estado
+
+		case STATE_ERROR: //STATE_ERROR comparte código con default porque la recuperación es la misma
+		default: //Trampa (default:): cualquier estado desconocido se recupera de forma segura hacia el reposo
+			current_state = STATE_IDLE; //Reinicia la FSM en un estado conocido
+			state_entry_flag = 1; //IDLE ejecutará su [ENTER]
+			break; //Fin del estado
 		}
 	}
 }
 
-/*
- * gpio_Init
- * PH1 como salida push-pull, LED de la tarjeta (blinky)
- */
-static void gpio_Init(void)
-{
-	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOHEN;	// Reloj del GPIOH (AHB1)
+/* Funciones driver de la FSM (el CÓMO) */
 
-	GPIOH->MODER &= ~GPIO_MODER_MODER1;
-	GPIOH->MODER |= GPIO_MODER_MODER1_0;	// 01: salida
-	GPIOH->OTYPER &= ~GPIO_OTYPER_OT1;		// Push-pull
-	GPIOH->OSPEEDR &= ~GPIO_OSPEEDER_OSPEEDR1;	// Baja velocidad
-	GPIOH->PUPDR &= ~GPIO_PUPDR_PUPDR1;		// Sin pull-up ni pull-down
-	GPIOH->ODR &= ~GPIO_ODR_OD1;			// Inicia en bajo
+/*
+ * get_next_event
+ * Convierte las banderas que dejan las ISR (y el cambio del encoder) en UN evento.
+ * Prioridad: pulsador > encoder > blinky. Las banderas que no se atienden en esta
+ * llamada quedan pendientes para la siguiente pasada, así no se pierde ningún evento.
+ */
+static Event_t get_next_event(void)
+{
+	Event_t ev = EV_NONE; //Si nada ocurrió, se devuelve EV_NONE
+	uint8_t percent = 0; //Valor del encoder en % leído en esta pasada
+
+	percent = encoder_ReadPercent(); //El encoder no genera interrupción: el TIM2 cuenta solo y aquí se lee su valor
+
+	__disable_irq(); //Sección crítica: leer y limpiar una bandera no puede ser interrumpido, o el evento podría perderse
+	if (button_flag == 1) //La ISR del pulsador dejó un evento pendiente
+	{
+		button_flag = 0; //Se baja la bandera: ya se atendió el evento
+		ev = EV_BUTTON_PRESS; //Evento más prioritario
+	}
+	else if (percent != duty_percent) //El encoder marca un valor distinto al duty que está aplicado
+	{
+		ev = EV_ENCODER_CHANGED; //El duty se actualiza en el [ENTER] de STATE_UPDATE_DUTY
+	}
+	else if (blink_flag == 1) //La ISR del TIM4 dejó un evento pendiente
+	{
+		blink_flag = 0; //Se baja la bandera: ya se atendió el evento
+		ev = EV_BLINK_TICK; //Evento menos prioritario
+	}
+	__enable_irq(); //Fin de la sección crítica: las ISR pueden volver a ejecutarse
+
+	return ev; //Devuelve el evento a la FSM
 }
 
 /*
- * tim4_Init
- * Evento de actualizacion cada 500 ms
- * PSC = 15999 -> tick de 1 ms, ARR = 499 -> (499 + 1) x 1 ms = 500 ms
+ * encoder_ReadPercent
+ * Lee el TIM2 (modo encoder), lo satura entre 0 y 400 cuentas y devuelve el duty en %.
  */
-static void tim4_Init(void)
+static uint8_t encoder_ReadPercent(void)
 {
-	RCC->APB1ENR |= RCC_APB1ENR_TIM4EN;		// Reloj del TIM4 (APB1)
+	int32_t raw_count = (int32_t) TIM2->CNT; //CNT es de 32 bit sin signo: al girar en CCW desde 0 pasa a 0xFFFFFFFF, que con signo es -1
 
-	TIM4->PSC = 15999;						// 16 MHz / 16000 = 1 kHz
-	TIM4->ARR = 499;						// 500 ms
-	TIM4->CNT = 0;
+	if (raw_count < 0) //Se giró por debajo de 0
+	{
+		TIM2->CNT = 0; //Se satura en 0 y se reescribe el contador para que no se "acumule" fuera de rango
+		raw_count = 0; //La cuenta usada en el cálculo también queda en 0
+	}
+	else if (raw_count > ENCODER_MAX_CNT) //Se giró por encima de 100 pasos
+	{
+		TIM2->CNT = ENCODER_MAX_CNT; //Se satura en 400 y se reescribe el contador por la misma razón
+		raw_count = ENCODER_MAX_CNT; //La cuenta usada en el cálculo también queda en 400
+	}
 
-	TIM4->EGR |= TIM_EGR_UG;				// Carga el PSC (solo se aplica en un update)
-	TIM4->SR &= ~TIM_SR_UIF;				// El UG levanta UIF, se limpia para no entrar a la ISR de inmediato
-
-	TIM4->DIER |= TIM_DIER_UIE;				// Interrupcion por update
-	__NVIC_EnableIRQ(TIM4_IRQn);
-
-	TIM4->CR1 |= TIM_CR1_CEN;				// Se arranca de ultimo
+	return (uint8_t) (raw_count / COUNTS_PER_STEP); //4 cuentas = 1 paso = 1 %
 }
-
-/*
- * tim1_pwm_Init
- * PA8 -> TIM1_CH1 (AF1), PWM modo 1, 500 Hz, duty 0 %
- * Clock TIM1: 16 MHz (APB2 sin division). PSC = 15 -> tick de 1 us
- * Periodo = (ARR + 1) x 1 us = 2000 us -> 500 Hz
- */
-static void tim1_pwm_Init(void)
-{
-	/* GPIOA PA8 como funcion alterna AF1 */
-	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;	// Reloj del GPIOA (AHB1)
-
-	GPIOA->MODER &= ~GPIO_MODER_MODER8;
-	GPIOA->MODER |= GPIO_MODER_MODER8_1;	// 10: funcion alterna
-
-	GPIOA->OTYPER &= ~GPIO_OTYPER_OT8;		// Push-pull
-
-	GPIOA->OSPEEDR &= ~GPIO_OSPEEDER_OSPEEDR8;
-	GPIOA->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR8_1;	// 10: alta velocidad
-
-	GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR8;		// Sin pull-up ni pull-down, el timer maneja el nivel
-
-	GPIOA->AFR[1] &= ~GPIO_AFRH_AFSEL8;
-	GPIOA->AFR[1] |= GPIO_AFRH_AFSEL8_0;	// AFRH8 = 0001 -> AF1 (TIM1_CH1)
-
-	/* Base de tiempo TIM1 */
-	RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;		// Reloj del TIM1 (APB2)
-
-	TIM1->PSC = 15;							// 16 MHz / (15 + 1) = 1 MHz -> 1 us
-	TIM1->ARR = arr_table[0];				// 1999 -> 2000 us -> 500 Hz
-	TIM1->CR1 &= ~TIM_CR1_DIR;				// Contador ascendente
-	TIM1->CR1 |= TIM_CR1_ARPE;				// ARR con preload: el cambio de frecuencia se aplica al terminar el periodo
-
-	/* Canal 1 en PWM modo 1 */
-	TIM1->CCMR1 &= ~TIM_CCMR1_CC1S;			// 00: el canal 1 es salida
-	TIM1->CCMR1 &= ~TIM_CCMR1_OC1M;
-	TIM1->CCMR1 |= (TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2);	// 110: PWM modo 1 (alto mientras CNT < CCR1)
-	TIM1->CCMR1 |= TIM_CCMR1_OC1PE;			// CCR1 con preload: el duty cambia solo al inicio de un periodo
-
-	TIM1->CCR1 = 0;							// Duty inicial 0 %
-
-	TIM1->CCER &= ~TIM_CCER_CC1P;			// Polaridad activa en alto
-	TIM1->CCER |= TIM_CCER_CC1E;			// Habilita la salida del canal 1 hacia el pin
-
-	TIM1->BDTR |= TIM_BDTR_MOE;				// TIM1 es timer avanzado: sin MOE las salidas quedan apagadas
-
-	TIM1->EGR |= TIM_EGR_UG;				// Evento de actualizacion: carga PSC, ARR y CCR1 desde sus preload
-
-	TIM1->CR1 |= TIM_CR1_CEN;				// Se arranca de ultimo
-}
-
-/*
- * tim2_encoder_Init
- * PA0 -> TIM2_CH1 (CLK), PA1 -> TIM2_CH2 (DT), ambos AF1 con Pull-Up
- * Modo encoder 3 (TI12): cuenta en los flancos de los dos canales
- * -> 4 cuentas por paso mecanico del KY040
- *
- * IC1F e IC2F: filtro digital de la entrada. Toma muestras a f_DTS/32 y solo
- * acepta un cambio si 8 muestras seguidas coinciden: 8 x 2 us = 16 us (f_DTS = 16 MHz)
- */
-static void tim2_encoder_Init(void)
-{
-	/* GPIOA PA0 y PA1 como funcion alterna AF1 */
-	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;	// Reloj del GPIOA (AHB1)
-
-	GPIOA->MODER &= ~(GPIO_MODER_MODER0 | GPIO_MODER_MODER1);
-	GPIOA->MODER |= (GPIO_MODER_MODER0_1 | GPIO_MODER_MODER1_1);	// 10: funcion alterna
-
-	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPDR0 | GPIO_PUPDR_PUPDR1);
-	GPIOA->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR1_0);	// 01: Pull-Up, los pines no quedan flotando
-
-	GPIOA->AFR[0] &= ~(GPIO_AFRL_AFSEL0 | GPIO_AFRL_AFSEL1);
-	GPIOA->AFR[0] |= (GPIO_AFRL_AFSEL0_0 | GPIO_AFRL_AFSEL1_0);	// AFRL0 = AFRL1 = 0001 -> AF1 (TIM2_CH1, TIM2_CH2)
-
-	/* Base de tiempo TIM2 (32 bit) */
-	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;		// Reloj del TIM2 (APB1)
-
-	TIM2->PSC = 0;							// El encoder no se divide
-	TIM2->ARR = 0xFFFFFFFF;					// Rango completo de 32 bit
-	TIM2->CNT = 0;
-
-	/* Canales 1 y 2 como entradas */
-	TIM2->CCMR1 &= ~(TIM_CCMR1_CC1S | TIM_CCMR1_CC2S);
-	TIM2->CCMR1 |= (TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0);	// 01: CC1 en TI1 y CC2 en TI2 (directo)
-
-	TIM2->CCMR1 &= ~(TIM_CCMR1_IC1F | TIM_CCMR1_IC2F);
-	TIM2->CCMR1 |= (TIM_CCMR1_IC1F | TIM_CCMR1_IC2F);		// Filtro 1111 (maximo): f_DTS/32 con N = 8
-
-	TIM2->CCER &= ~(TIM_CCER_CC1P | TIM_CCER_CC1NP | TIM_CCER_CC2P | TIM_CCER_CC2NP);	// Sin inversion (si cuenta al reves, se activa CC1P)
-	TIM2->CCER |= (TIM_CCER_CC1E | TIM_CCER_CC2E);			// Habilita las capturas de los dos canales
-
-	/* Modo encoder */
-	TIM2->SMCR &= ~TIM_SMCR_SMS;
-	TIM2->SMCR |= (TIM_SMCR_SMS_0 | TIM_SMCR_SMS_1);		// 011: encoder mode 3 (cuenta con TI1 y TI2)
-
-#if SW_USE_TIM2_CH3
-	sw_tim2ch3_Config();					// El canal 3 se configura antes de arrancar el contador
-#endif
-
-	TIM2->CR1 |= TIM_CR1_CEN;				// Se arranca de ultimo
-}
-
-#if SW_USE_TIM2_CH3
-/*
- * sw_tim2ch3_Config
- * Pulsador en PA2 -> TIM2_CH3 (AF1), captura en flanco de bajada con filtro IC3F
- * El canal 3 es independiente del par CH1/CH2 del encoder, no lo afecta.
- * Con CC3IE se genera una interrupcion (CC3IF) en cada flanco aceptado.
- */
-static void sw_tim2ch3_Config(void)
-{
-	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;	// Reloj del GPIOA (AHB1)
-
-	GPIOA->MODER &= ~GPIO_MODER_MODER2;
-	GPIOA->MODER |= GPIO_MODER_MODER2_1;	// 10: funcion alterna
-
-	GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR2;
-	GPIOA->PUPDR |= GPIO_PUPDR_PUPDR2_0;	// 01: Pull-Up, en reposo es 1
-
-	GPIOA->AFR[0] &= ~GPIO_AFRL_AFSEL2;
-	GPIOA->AFR[0] |= GPIO_AFRL_AFSEL2_0;	// AFRL2 = 0001 -> AF1 (TIM2_CH3)
-
-	TIM2->CCMR2 &= ~TIM_CCMR2_CC3S;
-	TIM2->CCMR2 |= TIM_CCMR2_CC3S_0;		// 01: CC3 es entrada en TI3
-
-	TIM2->CCMR2 &= ~TIM_CCMR2_IC3F;
-	TIM2->CCMR2 |= TIM_CCMR2_IC3F;			// Filtro 1111, el mismo de los canales del encoder
-
-	TIM2->CCER &= ~TIM_CCER_CC3NP;
-	TIM2->CCER |= TIM_CCER_CC3P;			// CC3P = 1, CC3NP = 0: flanco de bajada (se presiona)
-	TIM2->CCER |= TIM_CCER_CC3E;			// Habilita la captura del canal 3
-
-	TIM2->SR &= ~TIM_SR_CC3IF;				// Limpia la bandera antes de habilitar la interrupcion
-	TIM2->DIER |= TIM_DIER_CC3IE;			// Interrupcion por captura del canal 3
-	__NVIC_EnableIRQ(TIM2_IRQn);
-}
-#else
-/*
- * exti0_Init
- * PB0 (SW del KY040) -> EXTI0, flanco de bajada. Es la misma secuencia del
- * boton PC13 (EXTI13), cambia el pin, la linea y el registro EXTICR.
- * PC13 ya tiene pull-up en la tarjeta; PB0 es un cable al KY040, por eso
- * se activa el Pull-Up interno.
- */
-static void exti0_Init(void)
-{
-	/* GPIOB PB0 como entrada con Pull-Up */
-	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;	// Reloj del GPIOB (AHB1)
-
-	GPIOB->MODER &= ~GPIO_MODER_MODER0;		// 00: entrada
-
-	GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR0;
-	GPIOB->PUPDR |= GPIO_PUPDR_PUPDR0_0;	// 01: Pull-Up, en reposo es 1 y al presionar baja a 0
-
-	/* Conexion de PB0 a la linea EXTI0 */
-	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;	// El mux de EXTI esta en SYSCFG (APB2)
-
-	SYSCFG->EXTICR[0] &= ~SYSCFG_EXTICR1_EXTI0;
-	SYSCFG->EXTICR[0] |= SYSCFG_EXTICR1_EXTI0_PB;	// EXTI0 toma el pin 0 del puerto B
-
-	EXTI->RTSR &= ~EXTI_RTSR_TR0;			// Sin disparo por flanco de subida
-	EXTI->FTSR |= EXTI_FTSR_TR0;			// Disparo por flanco de bajada (el boton conecta PB0 a GND)
-
-	EXTI->PR = EXTI_PR_PR0;					// Limpia la bandera pendiente (se limpia escribiendo 1)
-	EXTI->IMR |= EXTI_IMR_MR0;				// Desenmascara la linea 0
-
-	__NVIC_EnableIRQ(EXTI0_IRQn);			// Habilita la interrupcion de la linea 0 en el NVIC
-}
-#endif
 
 /*
  * pwm_SetFrequency
- * ARR nuevo desde arr_table. Con ARPE = 1 se aplica al terminar el periodo actual
+ * ARR nuevo desde arr_table. Con ARPE = 1 se aplica al terminar el periodo actual.
  */
 static void pwm_SetFrequency(uint8_t index)
 {
-	if (index < NUM_FREQ)
+	if (index < NUM_FREQ) //Validación: nunca se lee fuera de arr_table
 	{
-		TIM1->ARR = arr_table[index];
+		TIM1->ARR = arr_table[index]; //Escribe el nuevo periodo: (ARR + 1) x 1 us
 	}
 }
 
@@ -377,26 +324,244 @@ static void pwm_SetFrequency(uint8_t index)
  */
 static void pwm_SetDuty(uint8_t percent)
 {
-	uint32_t period_ticks = 0;
+	uint32_t period_ticks = 0; //Cantidad de ticks de 1 us que dura un periodo
 
-	if (percent > DUTY_MAX)
+	if (percent > DUTY_MAX) //Validación: el duty nunca pasa de 100 %
 	{
-		percent = DUTY_MAX;
+		percent = DUTY_MAX; //Se satura en el máximo
 	}
 
-	period_ticks = (uint32_t) arr_table[freq_index] + 1;
-	TIM1->CCR1 = (period_ticks * percent) / DUTY_MAX;
+	period_ticks = (uint32_t) arr_table[freq_index] + 1; //El periodo es ARR + 1 ticks porque el contador cuenta desde 0 hasta ARR
+	TIM1->CCR1 = (period_ticks * percent) / DUTY_MAX; //Regla de tres: ancho del pulso en ticks para ese porcentaje
 }
 
-/* Interrupciones */
+/*
+ * led_Toggle
+ * Cambia el estado del LED de la tarjeta (PH1).
+ */
+static void led_Toggle(void)
+{
+	GPIOH->ODR ^= GPIO_ODR_OD1; //XOR con 1: invierte el bit sin tocar los otros pines del puerto
+}
 
-/* Blinky: cada 500 ms alterna PH1 */
+/* Funciones de inicialización del hardware */
+
+/*
+ * gpio_Init
+ * PH1 como salida push-pull, LED de la tarjeta (blinky)
+ */
+static void gpio_Init(void)
+{
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOHEN; //Activa la señal de reloj del GPIOH (bus AHB1), sin reloj el puerto ignora las escrituras
+
+	GPIOH->MODER &= ~GPIO_MODER_MODER1; //Limpia los 2 bits de modo del pin 1 antes de asignar
+	GPIOH->MODER |= GPIO_MODER_MODER1_0; //01: salida de propósito general
+	GPIOH->OTYPER &= ~GPIO_OTYPER_OT1; //0: push-pull (el pin maneja alto y bajo)
+	GPIOH->OSPEEDR &= ~GPIO_OSPEEDER_OSPEEDR1; //00: baja velocidad, suficiente para un LED
+	GPIOH->PUPDR &= ~GPIO_PUPDR_PUPDR1; //00: sin pull-up ni pull-down, el pin es salida
+	GPIOH->ODR &= ~GPIO_ODR_OD1; //El LED inicia apagado
+}
+
+/*
+ * tim4_Init
+ * Evento de actualización cada 500 ms
+ * PSC = 15999 -> tick de 1 ms, ARR = 499 -> (499 + 1) x 1 ms = 500 ms
+ */
+static void tim4_Init(void)
+{
+	RCC->APB1ENR |= RCC_APB1ENR_TIM4EN; //Activa la señal de reloj del TIM4 (bus APB1)
+
+	TIM4->PSC = 15999; //16 MHz / (15999 + 1) = 1 kHz -> cada tick dura 1 ms
+	TIM4->ARR = 499; //El contador cuenta de 0 a 499: 500 ticks x 1 ms = 500 ms
+	TIM4->CNT = 0; //Reinicia el contador en 0
+
+	TIM4->EGR |= TIM_EGR_UG; //Fuerza un evento de actualización: el PSC solo se carga a su registro activo en un update
+	TIM4->SR &= ~TIM_SR_UIF; //El UG anterior levanta UIF, se limpia para que no entre una ISR falsa al habilitar el NVIC
+
+	TIM4->DIER |= TIM_DIER_UIE; //Habilita la interrupción por actualización (primer interruptor)
+	__NVIC_EnableIRQ(TIM4_IRQn); //Habilita la interrupción del TIM4 en el NVIC (segundo interruptor)
+
+	TIM4->CR1 |= TIM_CR1_CEN; //Arranca el contador, siempre de último con todo ya configurado
+}
+
+/*
+ * tim1_pwm_Init
+ * PA8 -> TIM1_CH1 (AF1), PWM modo 1, 500 Hz, duty 0 %
+ * Clock TIM1: 16 MHz (APB2 sin división). PSC = 15 -> tick de 1 us
+ * Periodo = (ARR + 1) x 1 us = 2000 us -> 500 Hz
+ */
+static void tim1_pwm_Init(void)
+{
+	/* GPIOA PA8 como función alterna AF1 */
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; //Activa la señal de reloj del GPIOA (bus AHB1)
+
+	GPIOA->MODER &= ~GPIO_MODER_MODER8; //Limpia los 2 bits de modo del pin 8
+	GPIOA->MODER |= GPIO_MODER_MODER8_1; //10: función alterna, el pin lo controla un periférico (el TIM1)
+
+	GPIOA->OTYPER &= ~GPIO_OTYPER_OT8; //0: push-pull, el timer fuerza alto y bajo
+
+	GPIOA->OSPEEDR &= ~GPIO_OSPEEDER_OSPEEDR8; //Limpia los 2 bits de velocidad del pin 8
+	GPIOA->OSPEEDR |= GPIO_OSPEEDER_OSPEEDR8_1; //10: alta velocidad, flancos más limpios hasta 2 kHz en el osciloscopio
+
+	GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR8; //00: sin pull-up ni pull-down, el timer maneja el nivel
+
+	GPIOA->AFR[1] &= ~GPIO_AFRH_AFSEL8; //Limpia los 4 bits de función alterna del pin 8 (los pines 8-15 están en AFR[1] o AFRH)
+	GPIOA->AFR[1] |= GPIO_AFRH_AFSEL8_0; //0001: AF1, conecta PA8 con TIM1_CH1
+
+	/* Base de tiempo TIM1 */
+	RCC->APB2ENR |= RCC_APB2ENR_TIM1EN; //Activa la señal de reloj del TIM1 (bus APB2, los TIM2 a TIM5 están en APB1)
+
+	TIM1->PSC = 15; //16 MHz / (15 + 1) = 1 MHz -> cada tick dura 1 us
+	TIM1->ARR = arr_table[0]; //1999: el contador cuenta de 0 a 1999 -> 2000 us -> 500 Hz
+	TIM1->CR1 &= ~TIM_CR1_DIR; //0: el contador cuenta hacia arriba
+	TIM1->CR1 |= TIM_CR1_ARPE; //ARR con preload: el cambio de frecuencia se aplica al terminar el periodo, sin pulsos cortados
+
+	/* Canal 1 en PWM modo 1 */
+	TIM1->CCMR1 &= ~TIM_CCMR1_CC1S; //00: el canal 1 es una salida (no una captura)
+	TIM1->CCMR1 &= ~TIM_CCMR1_OC1M; //Limpia los 3 bits del modo de salida
+	TIM1->CCMR1 |= (TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2); //110: PWM modo 1, alto mientras CNT < CCR1
+	TIM1->CCMR1 |= TIM_CCMR1_OC1PE; //CCR1 con preload: el duty nuevo entra solo al inicio de un periodo
+
+	TIM1->CCR1 = 0; //Duty inicial 0 %: la salida inicia en bajo
+
+	TIM1->CCER &= ~TIM_CCER_CC1P; //0: polaridad activa en alto
+	TIM1->CCER |= TIM_CCER_CC1E; //Habilita la salida del canal 1 hacia el pin
+
+	TIM1->BDTR |= TIM_BDTR_MOE; //TIM1 es un timer avanzado: sin MOE (Main Output Enable) las salidas quedan apagadas aunque todo lo demás esté bien
+
+	TIM1->EGR |= TIM_EGR_UG; //Fuerza un update: copia PSC, ARR y CCR1 desde sus preload a los registros activos
+
+	TIM1->CR1 |= TIM_CR1_CEN; //Arranca el contador, siempre de último
+}
+
+/*
+ * tim2_encoder_Init
+ * PA0 -> TIM2_CH1 (CLK), PA1 -> TIM2_CH2 (DT), ambos AF1 con Pull-Up
+ * Modo encoder 3 (TI12): cuenta en los flancos de los dos canales
+ * -> 4 cuentas por paso mecánico del KY040
+ *
+ * IC1F e IC2F: filtro digital de la entrada. Toma muestras a f_DTS/32 y solo
+ * acepta un cambio si 8 muestras seguidas coinciden: 8 x 2 us = 16 us (f_DTS = 16 MHz)
+ */
+static void tim2_encoder_Init(void)
+{
+	/* GPIOA PA0 y PA1 como función alterna AF1 */
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; //Activa la señal de reloj del GPIOA (bus AHB1)
+
+	GPIOA->MODER &= ~(GPIO_MODER_MODER0 | GPIO_MODER_MODER1); //Limpia los bits de modo de PA0 y PA1
+	GPIOA->MODER |= (GPIO_MODER_MODER0_1 | GPIO_MODER_MODER1_1); //10: función alterna, los pines los lee el TIM2
+
+	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPDR0 | GPIO_PUPDR_PUPDR1); //Limpia los bits de pull de PA0 y PA1
+	GPIOA->PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR1_0); //01: Pull-Up, el KY040 cierra a GND y sin pull-up la entrada flotaría entre pasos
+
+	GPIOA->AFR[0] &= ~(GPIO_AFRL_AFSEL0 | GPIO_AFRL_AFSEL1); //Limpia los bits de función alterna de PA0 y PA1 (pines 0-7 están en AFR[0] o AFRL)
+	GPIOA->AFR[0] |= (GPIO_AFRL_AFSEL0_0 | GPIO_AFRL_AFSEL1_0); //0001: AF1, conecta PA0 con TIM2_CH1 y PA1 con TIM2_CH2
+
+	/* Base de tiempo TIM2 (32 bit) */
+	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN; //Activa la señal de reloj del TIM2 (bus APB1)
+
+	TIM2->PSC = 0; //Sin división: se quiere contar cada flanco del encoder
+	TIM2->ARR = 0xFFFFFFFF; //Rango completo de 32 bit: el contador no se desborda en uso normal
+	TIM2->CNT = 0; //El encoder inicia en 0
+
+	/* Canales 1 y 2 como entradas */
+	TIM2->CCMR1 &= ~(TIM_CCMR1_CC1S | TIM_CCMR1_CC2S); //Limpia la selección de entrada de ambos canales
+	TIM2->CCMR1 |= (TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0); //01: CC1 lee TI1 y CC2 lee TI2 (conexión directa)
+
+	TIM2->CCMR1 &= ~(TIM_CCMR1_IC1F | TIM_CCMR1_IC2F); //Limpia los 4 bits de filtro de cada canal
+	TIM2->CCMR1 |= (TIM_CCMR1_IC1F | TIM_CCMR1_IC2F); //1111: filtro máximo, f_DTS/32 con N = 8 (rechaza glitches de menos de 16 us)
+
+	TIM2->CCER &= ~(TIM_CCER_CC1P | TIM_CCER_CC1NP | TIM_CCER_CC2P | TIM_CCER_CC2NP); //Sin inversión de polaridad (si cuenta al revés se activa CC1P)
+	TIM2->CCER |= (TIM_CCER_CC1E | TIM_CCER_CC2E); //Habilita la captura de los dos canales
+
+	/* Modo encoder */
+	TIM2->SMCR &= ~TIM_SMCR_SMS; //Limpia los 3 bits del modo esclavo
+	TIM2->SMCR |= (TIM_SMCR_SMS_0 | TIM_SMCR_SMS_1); //011: encoder mode 3, cuenta con los flancos de TI1 y TI2 (4 cuentas por paso)
+
+#if SW_USE_TIM2_CH3
+	sw_tim2ch3_Config(); //El canal 3 se configura antes de arrancar el contador
+#endif
+
+	TIM2->CR1 |= TIM_CR1_CEN; //Arranca el contador, siempre de último
+}
+
+#if SW_USE_TIM2_CH3
+/*
+ * sw_tim2ch3_Config
+ * Pulsador en PA2 -> TIM2_CH3 (AF1), captura en flanco de bajada con filtro IC3F
+ * El canal 3 es independiente del par CH1/CH2 del encoder, no lo afecta.
+ * Con CC3IE se genera una interrupción (CC3IF) en cada flanco aceptado.
+ */
+static void sw_tim2ch3_Config(void)
+{
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; //Activa la señal de reloj del GPIOA (bus AHB1)
+
+	GPIOA->MODER &= ~GPIO_MODER_MODER2; //Limpia los bits de modo de PA2
+	GPIOA->MODER |= GPIO_MODER_MODER2_1; //10: función alterna, el pin lo lee el TIM2
+
+	GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR2; //Limpia los bits de pull de PA2
+	GPIOA->PUPDR |= GPIO_PUPDR_PUPDR2_0; //01: Pull-Up, en reposo el pin lee 1
+
+	GPIOA->AFR[0] &= ~GPIO_AFRL_AFSEL2; //Limpia los bits de función alterna de PA2
+	GPIOA->AFR[0] |= GPIO_AFRL_AFSEL2_0; //0001: AF1, conecta PA2 con TIM2_CH3
+
+	TIM2->CCMR2 &= ~TIM_CCMR2_CC3S; //Limpia la selección de entrada del canal 3
+	TIM2->CCMR2 |= TIM_CCMR2_CC3S_0; //01: CC3 es una entrada que lee TI3
+
+	TIM2->CCMR2 &= ~TIM_CCMR2_IC3F; //Limpia los 4 bits de filtro del canal 3
+	TIM2->CCMR2 |= TIM_CCMR2_IC3F; //1111: el mismo filtro de los canales del encoder (16 us)
+
+	TIM2->CCER &= ~TIM_CCER_CC3NP; //CC3NP = 0
+	TIM2->CCER |= TIM_CCER_CC3P; //CC3P = 1 y CC3NP = 0: captura en flanco de bajada (cuando se presiona)
+	TIM2->CCER |= TIM_CCER_CC3E; //Habilita la captura del canal 3
+
+	TIM2->SR &= ~TIM_SR_CC3IF; //Limpia la bandera antes de habilitar la interrupción
+	TIM2->DIER |= TIM_DIER_CC3IE; //Habilita la interrupción por captura del canal 3 (primer interruptor)
+	__NVIC_EnableIRQ(TIM2_IRQn); //Habilita la interrupción del TIM2 en el NVIC (segundo interruptor)
+}
+#else
+/*
+ * exti0_Init
+ * PB0 (SW del KY040) -> EXTI0, flanco de bajada. Es la misma secuencia del
+ * botón PC13 (EXTI13), cambia el pin, la línea y el registro EXTICR.
+ * PC13 ya tiene pull-up en la tarjeta; PB0 es un cable al KY040, por eso
+ * se activa el Pull-Up interno.
+ */
+static void exti0_Init(void)
+{
+	/* GPIOB PB0 como entrada con Pull-Up */
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN; //Activa la señal de reloj del GPIOB (bus AHB1)
+
+	GPIOB->MODER &= ~GPIO_MODER_MODER0; //00: entrada
+
+	GPIOB->PUPDR &= ~GPIO_PUPDR_PUPDR0; //Limpia los bits de pull de PB0
+	GPIOB->PUPDR |= GPIO_PUPDR_PUPDR0_0; //01: Pull-Up, en reposo el pin lee 1 y al presionar baja a 0
+
+	/* Conexión de PB0 a la línea EXTI0 */
+	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; //Activa el reloj del SYSCFG (bus APB2), el multiplexor de EXTI vive ahí
+
+	SYSCFG->EXTICR[0] &= ~SYSCFG_EXTICR1_EXTI0; //Limpia la selección de puerto de la línea 0
+	SYSCFG->EXTICR[0] |= SYSCFG_EXTICR1_EXTI0_PB; //0001: la línea EXTI0 toma el pin 0 del puerto B
+
+	EXTI->RTSR &= ~EXTI_RTSR_TR0; //Sin disparo por flanco de subida (al soltar)
+	EXTI->FTSR |= EXTI_FTSR_TR0; //Disparo por flanco de bajada (el pulsador conecta PB0 a GND)
+
+	EXTI->PR = EXTI_PR_PR0; //Limpia una posible bandera pendiente (se limpia escribiendo 1)
+	EXTI->IMR |= EXTI_IMR_MR0; //Desenmascara la línea 0: deja que llegue la interrupción al NVIC
+
+	__NVIC_EnableIRQ(EXTI0_IRQn); //Habilita la interrupción de la línea 0 en el NVIC
+}
+#endif
+
+/* Funciones ISR (solo registran el evento y regresan, sin lógica de la FSM) */
+
+/* Blinky: cada 500 ms deja la bandera para que la FSM cambie el LED */
 void TIM4_IRQHandler(void)
 {
-	if (TIM4->SR & TIM_SR_UIF)
+	if (TIM4->SR & TIM_SR_UIF) //Confirma que la interrupción fue por actualización
 	{
-		TIM4->SR &= ~TIM_SR_UIF;			// Limpia la bandera
-		GPIOH->ODR ^= GPIO_ODR_OD1;
+		TIM4->SR &= ~TIM_SR_UIF; //Baja la bandera (escribiendo 0) para que la interrupción se pueda volver a generar
+		blink_flag = 1; //Deja el evento: la FSM lo convierte en EV_BLINK_TICK
 	}
 }
 
@@ -404,20 +569,20 @@ void TIM4_IRQHandler(void)
 /* Pulsador por captura del canal 3 del TIM2 */
 void TIM2_IRQHandler(void)
 {
-	if (TIM2->SR & TIM_SR_CC3IF)
+	if (TIM2->SR & TIM_SR_CC3IF) //Confirma que la interrupción fue por captura del canal 3
 	{
-		TIM2->SR &= ~TIM_SR_CC3IF;			// Limpia la bandera
-		button_event = 1;
+		TIM2->SR &= ~TIM_SR_CC3IF; //Baja la bandera (escribiendo 0) para que se pueda volver a generar
+		button_flag = 1; //Deja el evento: la FSM lo convierte en EV_BUTTON_PRESS
 	}
 }
 #else
 /* Pulsador por EXTI0 */
 void EXTI0_IRQHandler(void)
 {
-	if (EXTI->PR & EXTI_PR_PR0)				// Verifica que la linea 0 genero la interrupcion
+	if (EXTI->PR & EXTI_PR_PR0) //Confirma que la línea 0 generó la interrupción
 	{
-		EXTI->PR = EXTI_PR_PR0;				// Limpia la bandera pendiente (escribiendo 1)
-		button_event = 1;
+		EXTI->PR = EXTI_PR_PR0; //Baja la bandera escribiendo 1 (en EXTI->PR se limpia con 1, no con 0)
+		button_flag = 1; //Deja el evento: la FSM lo convierte en EV_BUTTON_PRESS
 	}
 }
 #endif
