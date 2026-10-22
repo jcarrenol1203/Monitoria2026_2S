@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Guía Monitores PWM Encoder</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+<nav aria-label="Secciones">
+  <a href="#vision">Visión general</a><a href="#pwm">PWM / TIM1</a><a href="#enc">Encoder / TIM2</a><a href="#filtro">Filtro ICxF</a><a href="#boton">Pulsador</a><a href="#calc">Calculadoras</a><a href="#errores">Errores</a><a href="#preguntas">Preguntas</a><a href="#codigo">Código</a>
+</nav>
+
+<header>
+  <div class="eyebrow">Monitoría Electrónica Digital · 2026-2S · NUCLEO-F411RE</div>
+  <h1>PWM con encoder KY040 y cambio de frecuencia por EXTI</h1>
+  <p class="lead">Guía para monitores: cómo funciona cada pieza del taller, qué registro toca cada línea y por qué se configura así. El taller es el port a CMSIS de la Tarea3 (HAL), reducido a PWM, encoder, pulsador y blinky.</p>
+</header>
+
+<section id="vision">
+<h2>Visión general</h2>
+<p>Los timers hacen casi todo solos. El <code>main</code> solo mueve datos entre ellos con una FSM de tres estados.</p>
+
+<figure>
+<svg viewBox="0 0 820 330" role="img" aria-label="El encoder alimenta el contador de TIM2, el main convierte la cuenta en duty y escribe CCR1 de TIM1 que sale por PA8; el pulsador pasa por EXTI0 y levanta button_event, que hace al main cambiar el ARR de TIM1; TIM4 hace parpadear PH1">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+<g fill="none" stroke="currentColor" stroke-width="1.4">
+<rect x="10" y="30" width="120" height="50" rx="4"/><rect x="190" y="30" width="130" height="50" rx="4"/><rect x="380" y="30" width="130" height="50" rx="4"/><rect x="570" y="30" width="110" height="50" rx="4"/><rect x="730" y="30" width="80" height="50" rx="4"/>
+<rect x="10" y="190" width="120" height="50" rx="4"/><rect x="190" y="190" width="130" height="50" rx="4"/><rect x="380" y="190" width="130" height="50" rx="4"/>
+<rect x="10" y="270" width="120" height="44" rx="4"/><rect x="190" y="270" width="130" height="44" rx="4"/>
+<line x1="130" y1="55" x2="188" y2="55" marker-end="url(#ar)"/><line x1="320" y1="55" x2="378" y2="55" marker-end="url(#ar)"/><line x1="510" y1="55" x2="568" y2="55" marker-end="url(#ar)"/><line x1="680" y1="55" x2="728" y2="55" marker-end="url(#ar)"/>
+<line x1="130" y1="215" x2="188" y2="215" marker-end="url(#ar)"/><line x1="320" y1="215" x2="378" y2="215" marker-end="url(#ar)"/>
+<line x1="130" y1="292" x2="188" y2="292" marker-end="url(#ar)"/>
+<path d="M445 190 V 80" marker-end="url(#ar)"/>
+<path d="M510 120 H625 V 80" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+</g>
+<g text-anchor="middle"><text x="70" y="52">KY040</text><text x="70" y="68">CLK · DT</text>
+<text x="255" y="52">TIM2</text><text x="255" y="68">CNT (4 por paso)</text>
+<text x="445" y="52">main (FSM)</text><text x="445" y="68">duty = CNT/4</text>
+<text x="625" y="52">TIM1</text><text x="625" y="68">CCR1 · ARR</text>
+<text x="770" y="52">PA8</text><text x="770" y="68">PWM</text>
+<text x="70" y="212">KY040 SW + RC</text><text x="70" y="228">PB0</text>
+<text x="255" y="212">EXTI0</text><text x="255" y="228">ISR</text>
+<text x="445" y="212">button_event</text><text x="445" y="228">freq_index</text>
+<text x="70" y="288">TIM4</text><text x="70" y="304">500 ms</text>
+<text x="255" y="288">PH1</text><text x="255" y="304">blinky</text></g>
+<g text-anchor="middle"><text x="159" y="47">CH1 / CH2</text><text x="349" y="47">lee CNT</text><text x="539" y="47">escribe</text><text x="159" y="207">flanco ↓</text><text x="349" y="207">bandera</text><text x="159" y="284">ISR</text></g>
+<text x="520" y="115">cambia ARR</text>
+</svg>
+<figcaption>Camino del duty (arriba), de la frecuencia (centro, línea punteada hacia TIM1) y del blinky (abajo).</figcaption>
+</figure>
+
+<h3>Pines y reloj</h3>
+<div class="scroll"><table>
+<tr><th>Señal</th><th>Pin</th><th>Detalle</th><th>Por qué</th></tr>
+<tr><td>TIM1_CH1</td><td>PA8 · AF1</td><td>PWM</td><td>Es el mismo pin de CH1 de TIM1 que usaba la Tarea3.</td></tr>
+<tr><td>TIM2_CH1</td><td>PA0 · AF1</td><td>KY040 CLK</td><td>Solo los canales 1 y 2 de TIM2 alimentan el modo encoder por hardware.</td></tr>
+<tr><td>TIM2_CH2</td><td>PA1 · AF1</td><td>KY040 DT</td><td>Segundo canal del par TI1/TI2.</td></tr>
+<tr><td>EXTI0</td><td>PB0</td><td>KY040 SW</td><td>La línea EXTI0 admite el pin 0 de cualquier puerto. PB0 evita confundirlo con PA0 del encoder.</td></tr>
+<tr><td>TIM2_CH3</td><td>PA2 · AF1</td><td>KY040 SW (variante)</td><td>Con <code>SW_USE_TIM2_CH3 = 1</code> el pulsador entra por captura con filtro, sin EXTI.</td></tr>
+<tr><td>GPIO</td><td>PH1</td><td>Blinky</td><td>LED de la tarjeta, alterna cada 500 ms por TIM4.</td></tr>
+</table></div>
+<p>El micro corre a <b>HSI 16 MHz</b>, sin PLL y sin <code>SystemClock_Config</code> (el <code>SystemInit</code> del startup está vacío). APB1 y APB2 tienen divisor 1, así que <b>todos los timers reciben 16 MHz</b>. Si el reloj cambia, hay que rehacer todas las cuentas.</p>
+</section>
+
+<section id="pwm">
+<h2>PWM con TIM1</h2>
+<p>El contador sube de 0 a ARR y vuelve a 0. En PWM modo 1 la salida está en alto mientras <code>CNT &lt; CCR1</code>.</p>
+<figure>
+<svg viewBox="0 0 640 220" role="img" aria-label="Diente de sierra del contador con la línea de CCR1 y la salida PWM, alta mientras el contador está por debajo de CCR1">
+<g fill="none" stroke="currentColor" stroke-width="1.4">
+<polyline points="40,90 160,20 160,90 280,20 280,90 400,20 400,90 520,20 520,90" stroke-linejoin="round"/>
+<line x1="40" y1="52" x2="560" y2="52" stroke-dasharray="5 4" stroke="var(--warn)"/>
+<polyline points="40,190 40,140 108,140 108,190 160,190 160,140 228,140 228,190 280,190 280,140 348,140 348,190 400,190 400,140 468,140 468,190 520,190 520,140" stroke="var(--accent)" stroke-width="2.2"/>
+</g>
+<text x="565" y="56" style="fill:var(--warn)">CCR1</text><text x="8" y="26">ARR</text><text x="8" y="94">0</text>
+<text x="8" y="146">PA8</text>
+<text x="44" y="208">t_on</text><text x="165" y="208">T = (ARR+1) × 1 µs</text>
+</svg>
+<figcaption>Con ARR = 1999 el periodo es 2000 µs (500 Hz). Al subir CCR1 el pulso se ensancha. CCR1 = ARR + 1 deja la salida siempre en alto (100 %).</figcaption>
+</figure>
+
+<h3>Registros de <code>tim1_pwm_Init</code></h3>
+<div class="scroll"><table>
+<tr><th>Registro</th><th>Valor</th><th>Para qué</th><th>Por qué así</th></tr>
+<tr><td>RCC→AHB1ENR</td><td>GPIOAEN</td><td>Reloj de GPIOA</td><td>Un periférico sin reloj ignora las escrituras.</td></tr>
+<tr><td>RCC→APB2ENR</td><td>TIM1EN</td><td>Reloj de TIM1</td><td>TIM1 cuelga de APB2 (TIM2-5 de APB1).</td></tr>
+<tr><td>GPIOA→MODER</td><td>MODER8 = 10</td><td>PA8 en función alterna</td><td>Sin esto el pin sigue como entrada y el timer no lo controla.</td></tr>
+<tr><td>GPIOA→OTYPER / PUPDR</td><td>push-pull / sin pull</td><td>Salida activa</td><td>El timer fuerza los dos niveles, no necesita pull.</td></tr>
+<tr><td>GPIOA→OSPEEDR</td><td>OSPEEDR8 = 10</td><td>Flancos rápidos</td><td>Mejora la forma de onda a 2 kHz en el osciloscopio.</td></tr>
+<tr><td>GPIOA→AFR[1]</td><td>AFSEL8 = 0001</td><td>AF1 = TIM1_CH1</td><td>Pines 8-15 usan AFR[1] (AFRH). Error típico: escribir AFR[0].</td></tr>
+<tr><td>TIM1→PSC</td><td>15</td><td>Tick de 1 µs</td><td>16 MHz / (15+1). Con tick de 1 µs, ARR+1 es el periodo en µs.</td></tr>
+<tr><td>TIM1→ARR</td><td>1999</td><td>Periodo 2000 µs</td><td>Frecuencia inicial 500 Hz (primera entrada de <code>arr_table</code>).</td></tr>
+<tr><td>TIM1→CR1</td><td>ARPE = 1, DIR = 0</td><td>ARR con preload, cuenta arriba</td><td>Con preload el nuevo ARR se aplica al terminar el periodo y no se corta un pulso a la mitad.</td></tr>
+<tr><td>TIM1→CCMR1</td><td>CC1S = 00, OC1M = 110, OC1PE = 1</td><td>Canal 1 salida, PWM 1, CCR con preload</td><td>CC1S = 00 lo declara salida. OC1M = 110 es PWM modo 1. OC1PE hace que el duty nuevo entre al inicio de un periodo.</td></tr>
+<tr><td>TIM1→CCR1</td><td>0</td><td>Duty 0 % al arrancar</td><td>El LED no se enciende solo al energizar.</td></tr>
+<tr><td>TIM1→CCER</td><td>CC1P = 0, CC1E = 1</td><td>Polaridad alta, salida habilitada</td><td>CC1E conecta la salida del canal al pin.</td></tr>
+<tr class="k"><td>TIM1→BDTR</td><td>MOE = 1</td><td>Main output enable</td><td>TIM1 es timer avanzado. Sin MOE el pin no se mueve aunque todo lo demás esté bien. Es el error más frecuente al portar de TIM2-5 a TIM1.</td></tr>
+<tr><td>TIM1→EGR</td><td>UG = 1</td><td>Fuerza un update</td><td>Copia PSC, ARR y CCR1 de los preloads a los registros activos antes de arrancar.</td></tr>
+<tr><td>TIM1→CR1</td><td>CEN = 1</td><td>Arranca el contador</td><td>Siempre de último, con todo configurado.</td></tr>
+</table></div>
+
+<div class="callout ok"><b>Cambio de frecuencia sin glitch.</b> <code>pwm_SetFrequency</code> solo escribe ARR. Como ARPE = 1, el valor nuevo entra al terminar el periodo en curso. En el ciclo siguiente de la FSM <code>pwm_SetDuty</code> recalcula CCR1 con el ARR nuevo (CCR1 también tiene preload) y el duty en % se mantiene.</div>
+</section>
+
+<section id="enc">
+<h2>Modo encoder con TIM2</h2>
+<p>El KY040 entrega dos señales en cuadratura, desfasadas un cuarto de periodo. Quién cambia primero indica el sentido.</p>
+<figure>
+<svg viewBox="0 0 700 230" role="img" aria-label="Señales CLK y DT en cuadratura: en giro horario CLK adelanta a DT, en antihorario DT adelanta a CLK">
+<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="miter">
+<polyline points="40,50 80,50 80,20 160,20 160,50 240,50 240,20 320,20" />
+<polyline points="40,100 120,100 120,70 200,70 200,100 280,100 280,70 320,70" stroke="var(--accent)"/>
+<polyline points="380,50 420,50 420,20 500,20 500,50 580,50 580,20 660,20" stroke="var(--accent)"/>
+<polyline points="380,100 460,100 460,70 540,70 540,100 620,100 620,70 660,70"/>
+</g>
+<text x="8" y="40">CLK</text><text x="8" y="90" style="fill:var(--accent)">DT</text>
+<text x="348" y="40" style="fill:var(--accent)">DT</text><text x="348" y="90">CLK</text>
+<text x="40" y="140">CW: CLK sube antes que DT</text><text x="380" y="140">CCW: DT sube antes que CLK</text>
+<g stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"><line x1="80" y1="10" x2="80" y2="110"/><line x1="120" y1="10" x2="120" y2="110"/><line x1="160" y1="10" x2="160" y2="110"/><line x1="200" y1="10" x2="200" y2="110"/></g>
+<text x="80" y="175" text-anchor="middle">+1</text><text x="120" y="175" text-anchor="middle">+1</text><text x="160" y="175" text-anchor="middle">+1</text><text x="200" y="175" text-anchor="middle">+1</text>
+<text x="40" y="205">4 flancos = 4 cuentas = 1 paso mecánico</text>
+</svg>
+<figcaption>En modo TI12 (SMS = 011) cada flanco de CLK o de DT cuenta. Un paso del KY040 genera 4 cuentas, por eso el duty es <code>CNT / 4</code>.</figcaption>
+</figure>
+
+<h3>Registros de <code>tim2_encoder_Init</code></h3>
+<div class="scroll"><table>
+<tr><th>Registro</th><th>Valor</th><th>Para qué</th><th>Por qué así</th></tr>
+<tr><td>GPIOA→MODER</td><td>MODER0/1 = 10</td><td>PA0, PA1 alternos</td><td>Los pines deben entregar su señal a los canales del timer.</td></tr>
+<tr><td>GPIOA→PUPDR</td><td>PUPDR0/1 = 01</td><td>Pull-Up</td><td>El KY040 cierra a GND. Sin pull-up la entrada flota entre pasos.</td></tr>
+<tr><td>GPIOA→AFR[0]</td><td>AFSEL0/1 = 0001</td><td>AF1 = TIM2_CH1/CH2</td><td>Pines 0-7 usan AFR[0] (AFRL).</td></tr>
+<tr><td>RCC→APB1ENR</td><td>TIM2EN</td><td>Reloj TIM2</td><td>TIM2 está en APB1.</td></tr>
+<tr><td>TIM2→PSC</td><td>0</td><td>Sin división</td><td>Se quiere contar cada flanco. El tiempo no importa aquí.</td></tr>
+<tr><td>TIM2→ARR</td><td>0xFFFFFFFF</td><td>Rango completo</td><td>TIM2 es de 32 bit. Debajo de 0 el contador pasa a 0xFFFFFFFF, que como <code>int32_t</code> es negativo y se detecta fácil.</td></tr>
+<tr><td>TIM2→CCMR1</td><td>CC1S = 01, CC2S = 01</td><td>Canales como entradas TI1 y TI2</td><td>El modo encoder lee las entradas ya filtradas de TI1/TI2.</td></tr>
+<tr class="k"><td>TIM2→CCMR1</td><td>IC1F = IC2F = 1111</td><td>Filtro digital</td><td>Ver la sección siguiente. Rechaza glitches de menos de 16 µs.</td></tr>
+<tr><td>TIM2→CCER</td><td>CC1P = CC2P = 0, CC1NP = CC2NP = 0, CC1E = CC2E = 1</td><td>Sin inversión, captura habilitada</td><td>Con CC1P = 1 se invierte el sentido de conteo sin tocar el cableado.</td></tr>
+<tr class="k"><td>TIM2→SMCR</td><td>SMS = 011</td><td>Encoder mode 3</td><td>El contador cuenta arriba o abajo según el orden de TI1/TI2, con flancos de ambos canales. SMS = 001 o 010 cuentan solo con un canal (2 cuentas por paso).</td></tr>
+<tr><td>TIM2→CR1</td><td>CEN = 1</td><td>Arranca</td><td>De último.</td></tr>
+</table></div>
+
+<h3>Lectura y saturación en el <code>main</code></h3>
+<pre>raw_count = (int32_t) TIM2-&gt;CNT;
+if (raw_count &lt; 0)   { TIM2-&gt;CNT = 0;   raw_count = 0; }
+else if (raw_count &gt; 400) { TIM2-&gt;CNT = 400; raw_count = 400; }
+duty_percent = raw_count / 4;</pre>
+<p>Se reescribe CNT al saturar para que el contador no se "acumule" fuera de rango. Si no, después de girar 20 pasos de más a la izquierda habría que girar otros 20 a la derecha antes de ver un cambio.</p>
+</section>
+
+<section id="filtro">
+<h2>El filtro digital <code>ICxF</code></h2>
+<p>Cada canal de captura del timer (CH1 a CH4) tiene su propio filtro de entrada. <code>IC1F</code>, <code>IC2F</code> (en <code>CCMR1</code>) e <code>IC3F</code>, <code>IC4F</code> (en <code>CCMR2</code>) son el mismo hardware con los mismos códigos. El filtro del encoder y el del canal 3 del pulsador son el mismo circuito.</p>
+<figure>
+<svg viewBox="0 0 700 200" role="img" aria-label="Un pulso corto en la entrada TIx no completa las N muestras iguales y el filtro lo descarta; un pulso largo sí y el filtro lo deja pasar con retraso">
+<g fill="none" stroke="currentColor" stroke-width="1.8">
+<polyline points="30,70 120,70 120,40 150,40 150,70 330,70 330,40 560,40 560,70 680,70"/>
+<polyline points="30,170 340,170 340,140 570,140 570,170 680,170" stroke="var(--accent)" stroke-width="2.2"/>
+</g>
+<g stroke="currentColor" stroke-width="1" stroke-dasharray="2 4"><line x1="330" y1="30" x2="330" y2="180"/><line x1="340" y1="30" x2="340" y2="180"/></g>
+<g fill="currentColor"><circle cx="335" cy="100" r="2.5"/></g>
+<text x="30" y="30">TIx (entrada del pin)</text><text x="30" y="130">salida del filtro (la ve el timer)</text>
+<text x="118" y="95">glitch &lt; N muestras</text><text x="118" y="110">→ se descarta</text>
+<text x="345" y="100">retraso = N / f_SAMPLING</text>
+</svg>
+<figcaption>El filtro muestrea TIx y acepta un nivel nuevo solo si N muestras seguidas coinciden. Lo que dura menos que eso no llega al timer; lo que dura más llega con un retraso de N muestras.</figcaption>
+</figure>
+
+<div class="scroll"><table>
+<tr><th>ICxF</th><th>f_SAMPLING</th><th>N</th><th>Pulso mínimo (f_DTS = 16 MHz, CKD = 00)</th></tr>
+<tr><td>0000</td><td>sin filtro</td><td>–</td><td>0</td></tr>
+<tr><td>0001</td><td>f_CK_INT</td><td>2</td><td>125 ns</td></tr>
+<tr><td>0010</td><td>f_CK_INT</td><td>4</td><td>250 ns</td></tr>
+<tr><td>0011</td><td>f_CK_INT</td><td>8</td><td>500 ns</td></tr>
+<tr><td>0100</td><td>f_DTS/2</td><td>6</td><td>750 ns</td></tr>
+<tr><td>0101</td><td>f_DTS/2</td><td>8</td><td>1 µs</td></tr>
+<tr><td>0110</td><td>f_DTS/4</td><td>6</td><td>1.5 µs</td></tr>
+<tr><td>0111</td><td>f_DTS/4</td><td>8</td><td>2 µs</td></tr>
+<tr><td>1000</td><td>f_DTS/8</td><td>6</td><td>3 µs</td></tr>
+<tr><td>1001</td><td>f_DTS/8</td><td>8</td><td>4 µs</td></tr>
+<tr><td>1010</td><td>f_DTS/16</td><td>5</td><td>5 µs</td></tr>
+<tr><td>1011</td><td>f_DTS/16</td><td>6</td><td>6 µs</td></tr>
+<tr><td>1100</td><td>f_DTS/16</td><td>8</td><td>8 µs</td></tr>
+<tr><td>1101</td><td>f_DTS/32</td><td>5</td><td>10 µs</td></tr>
+<tr><td>1110</td><td>f_DTS/32</td><td>6</td><td>12 µs</td></tr>
+<tr class="k"><td>1111</td><td>f_DTS/32</td><td>8</td><td>16 µs</td></tr>
+</table></div>
+<p><code>f_DTS</code> sale de <code>CR1.CKD</code>: con <code>CKD = 00</code> es <code>f_CK_INT</code> (16 MHz), con <code>01</code> es la mitad y con <code>10</code> es la cuarta parte (el máximo sube a 64 µs).</p>
+
+<h3>Qué hace y qué no hace</h3>
+<ul>
+<li>Sirve contra ruido eléctrico rápido: picos de pocos µs en cables largos o al conmutar cargas.</li>
+<li><b>No elimina el rebote mecánico.</b> Un contacto rebota entre 1 y 10 ms; con 16 µs de filtro cada rebote largo pasa como un flanco válido. En la Tarea3 se creía que "15 y 30 ciclos" bastaban, pero son 16 µs.</li>
+<li>El encoder funciona igual aunque rebote, porque cada rebote es +1 y luego −1 en la cuenta de cuadratura y se compensan. Un contador de eventos como el pulsador no se compensa: cada rebote cuenta.</li>
+<li>Por eso el pulsador lleva un <b>filtro RC externo</b> y no depende del filtro del timer.</li>
+</ul>
+<div class="callout ok"><b>Para qué sirve la variante TIM2_CH3.</b> Muestra que el pulsador puede entrar por el mismo periférico del encoder, con el mismo filtro y sin EXTI, y permite comparar ambos caminos. No sustituye al RC.</div>
+</section>
+
+<section id="boton">
+<h2>Pulsador: EXTI0 y filtro RC</h2>
+<p>La configuración es la del botón de usuario PC13 del taller de EXTI, en otro pin. El pulsador a tierra con Pull-Up lee 1 en reposo y 0 al presionar, así que se interrumpe en <b>flanco de bajada</b>.</p>
+
+<h3>PC13 contra PB0</h3>
+<div class="scroll"><table>
+<tr><th>Elemento</th><th>PC13 (botón de la placa)</th><th>PB0 (SW del KY040)</th><th>Por qué cambia</th></tr>
+<tr><td>Reloj</td><td>GPIOCEN</td><td>GPIOBEN</td><td>El pin está en otro puerto.</td></tr>
+<tr><td>PUPDR</td><td>sin pull</td><td>Pull-Up (01)</td><td>La placa ya trae pull-up en PC13. El cable al KY040 no.</td></tr>
+<tr><td>SYSCFG→EXTICR</td><td>EXTICR[3] · EXTI13_PC</td><td>EXTICR[0] · EXTI0_PB</td><td>Cada registro EXTICR cubre 4 líneas: 0-3 en [0], 12-15 en [3].</td></tr>
+<tr><td>EXTI→FTSR/RTSR/PR/IMR</td><td>TR13 / PR13 / MR13</td><td>TR0 / PR0 / MR0</td><td>Bit de la línea.</td></tr>
+<tr><td>NVIC</td><td>EXTI15_10_IRQn</td><td>EXTI0_IRQn</td><td>Las líneas 5-9 y 10-15 comparten vector; la 0 tiene el suyo.</td></tr>
+<tr><td>ISR</td><td><code>EXTI15_10_IRQHandler</code></td><td><code>EXTI0_IRQHandler</code></td><td>El nombre lo define el vector en el startup.</td></tr>
+<tr><td>Rebote</td><td>RC en la placa</td><td>RC externo en el protoboard</td><td>El cable del KY040 no trae filtro.</td></tr>
+</table></div>
+
+<h3>Registros de <code>exti0_Init</code></h3>
+<div class="scroll"><table>
+<tr><th>Registro</th><th>Valor</th><th>Para qué</th><th>Por qué así</th></tr>
+<tr><td>RCC→AHB1ENR</td><td>GPIOBEN</td><td>Reloj GPIOB</td><td>Sin reloj el IDR no se actualiza.</td></tr>
+<tr><td>GPIOB→MODER / PUPDR</td><td>00 / 01</td><td>Entrada con Pull-Up</td><td>Nivel definido en reposo.</td></tr>
+<tr><td>RCC→APB2ENR</td><td>SYSCFGEN</td><td>Reloj de SYSCFG</td><td>El multiplexor de EXTI (EXTICR) vive en SYSCFG.</td></tr>
+<tr><td>SYSCFG→EXTICR[0]</td><td>EXTI0 = 0001</td><td>Línea 0 → puerto B</td><td>Cada línea EXTIx solo atiende un puerto a la vez.</td></tr>
+<tr><td>EXTI→RTSR / FTSR</td><td>TR0 = 0 / TR0 = 1</td><td>Solo flanco de bajada</td><td>Una interrupción por click, no dos (presionar y soltar).</td></tr>
+<tr><td>EXTI→PR</td><td>PR0 = 1 (escritura)</td><td>Borra pendientes</td><td>Se borra escribiendo 1, por eso <code>=</code> y no <code>&amp;= ~</code>.</td></tr>
+<tr class="k"><td>EXTI→IMR</td><td>MR0 = 1</td><td>Desenmascara la línea</td><td>Hay tres interruptores: línea (IMR), NVIC y el pin.</td></tr>
+<tr><td>NVIC</td><td><code>__NVIC_EnableIRQ(EXTI0_IRQn)</code></td><td>Permite la IRQ en el core</td><td>Sin esto la bandera se levanta pero no se ejecuta la ISR.</td></tr>
+</table></div>
+<div class="callout"><b>Borrar banderas.</b> <code>EXTI→PR</code> es "write 1 to clear". <code>TIMx→SR</code> es "write 0 to clear". Los estudiantes ya vieron el segundo en timers y se confunden con el primero.</div>
+
+<h3>Filtro RC externo</h3>
+<figure>
+<svg viewBox="0 0 520 200" role="img" aria-label="Esquema del pulsador SW del KY040 con pull-up a 3V3, pulsador a tierra, condensador de 100 nF en paralelo con el pulsador y la conexión al pin PB0">
+<defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+<g fill="none" stroke="currentColor" stroke-width="1.6">
+<line x1="60" y1="22" x2="60" y2="38"/><rect x="48" y="38" width="24" height="44"/><line x1="60" y1="82" x2="60" y2="100"/>
+<line x1="60" y1="100" x2="440" y2="100" marker-end="url(#ar2)"/>
+<line x1="180" y1="100" x2="180" y2="118"/><rect x="168" y="118" width="24" height="26"/><line x1="180" y1="144" x2="180" y2="160"/><line x1="164" y1="160" x2="196" y2="160"/>
+<line x1="320" y1="100" x2="320" y2="122"/><line x1="304" y1="122" x2="336" y2="122"/><line x1="304" y1="132" x2="336" y2="132"/><line x1="320" y1="132" x2="320" y2="160"/><line x1="304" y1="160" x2="336" y2="160"/>
+</g>
+<circle cx="180" cy="100" r="3" fill="currentColor"/><circle cx="320" cy="100" r="3" fill="currentColor"/><circle cx="60" cy="100" r="3" fill="currentColor"/>
+<text x="80" y="30">3V3</text><text x="80" y="64">R pull-up</text>
+<text x="202" y="135">SW</text><text x="346" y="132">C = 100 nF</text>
+<text x="445" y="104">PB0</text><text x="180" y="180" text-anchor="middle">GND</text><text x="320" y="180" text-anchor="middle">GND</text>
+</svg>
+<figcaption>El condensador va entre el pin y GND, en paralelo con el pulsador. Al soltar, se carga por el pull-up (interno de unos 40 kΩ, o 10 kΩ si el módulo lo trae): τ = R·C entre 1 y 4 ms. Al presionar se descarga rápido por el contacto.</figcaption>
+</figure>
+
+<div class="callout"><b>Lo que el RC no resuelve.</b> Suaviza el rebote, pero el Schmitt trigger del pin puede cruzar el umbral más de una vez con contactos muy sucios. Si aun así se salta una frecuencia, el siguiente paso es subir C a 470 nF. No se agrega ningún timer ni espera por software.</div>
+</section>
+
+<section id="blinky">
+<h2>Blinky con TIM4</h2>
+<p>PH1 alterna cada 500 ms para saber que el programa corre. TIM4 se configura igual que el timer del taller de semáforo: <code>PSC = 15999</code> (tick de 1 ms), <code>ARR = 499</code>, <code>UIE = 1</code>, <code>NVIC_EnableIRQ(TIM4_IRQn)</code> y <code>CEN</code> de último. En <code>TIM4_IRQHandler</code> se limpia <code>UIF</code> y se hace <code>GPIOH-&gt;ODR ^= GPIO_ODR_OD1</code>. Antes de habilitar la interrupción se fuerza un <code>UG</code> para cargar el PSC y se limpia <code>UIF</code>, así no entra una ISR falsa.</p>
+</section>
+
+<section id="calc">
+<h2>Calculadoras</h2>
+<h3>PSC / ARR / CCR1</h3>
+<p>Con reloj de 16 MHz. Prueba 500, 1000 y 2000 Hz y mira cómo CCR1 sigue al ARR.</p>
+<div class="calc">
+  <label>Reloj timer (MHz)<input id="clk" type="number" value="16" min="1" step="1"></label>
+  <label>PSC<input id="psc" type="number" value="15" min="0" max="65535" step="1"></label>
+  <label>Frecuencia (Hz)<input id="freq" type="number" value="500" min="1" step="1"></label>
+  <label>Duty (%)<input id="duty" type="number" value="50" min="0" max="100" step="1"></label>
+</div>
+<div class="out" aria-live="polite">
+  <div><span>Tick</span><strong id="o-tick">1 µs</strong></div>
+  <div><span>ARR</span><strong id="o-arr">1999</strong></div>
+  <div><span>CCR1</span><strong id="o-ccr">1000</strong></div>
+  <div><span>Frec. real</span><strong id="o-real">500 Hz</strong></div>
+</div>
+<p id="o-note" style="color:var(--muted);font-size:13px"></p>
+
+<h3>Filtro ICxF</h3>
+<p>Elige el código y el divisor <code>CKD</code> y mira cuánto dura el pulso más corto que pasa.</p>
+<div class="calc">
+  <label>Reloj f_CK_INT (MHz)<input id="fclk" type="number" value="16" min="1" step="1"></label>
+  <label>CKD
+    <select id="ckd"><option value="1">00 (÷1)</option><option value="2">01 (÷2)</option><option value="4">10 (÷4)</option></select>
+  </label>
+  <label>ICxF
+    <select id="icf"></select>
+  </label>
+</div>
+<div class="out" aria-live="polite">
+  <div><span>f_SAMPLING</span><strong id="f-fs">500 kHz</strong></div>
+  <div><span>N</span><strong id="f-n">8</strong></div>
+  <div><span>Pulso mínimo</span><strong id="f-t">16 µs</strong></div>
+</div>
+<p id="f-note" style="color:var(--muted);font-size:13px"></p>
+</section>
+
+<section id="errores">
+<h2>Errores frecuentes</h2>
+<div class="scroll"><table>
+<tr><th>Síntoma</th><th>Causa</th><th>Cómo guiar al estudiante</th></tr>
+<tr><td>PA8 siempre en 0</td><td>Falta <code>BDTR.MOE</code></td><td>"¿Qué tiene TIM1 que no tiene TIM2?" Que lo busque en el manual (RM0383, TIM1 BDTR).</td></tr>
+<tr><td>PA8 no responde</td><td><code>AFR[0]</code> en vez de <code>AFR[1]</code></td><td>Que calcule en qué registro cae el pin 8.</td></tr>
+<tr><td>El duty cambia 4 veces más rápido</td><td>Olvidó <code>/4</code></td><td>Que mire <code>TIM2→CNT</code> en Live Watch al dar un click.</td></tr>
+<tr><td>La cuenta se va a números enormes</td><td>No satura o compara como <code>uint</code></td><td>Que gire a la izquierda desde 0 y mire CNT (0xFFFFFFFF).</td></tr>
+<tr><td>Un click salta dos frecuencias</td><td>Rebote sin RC</td><td>Que cuente cuántas veces entra la ISR con un breakpoint, y que ponga el condensador.</td></tr>
+<tr><td>La ISR del pulsador nunca corre</td><td>Falta SYSCFG, <code>IMR</code> o NVIC</td><td>Los tres interruptores: línea, IMR, NVIC. Que mire <code>EXTI→PR</code>.</td></tr>
+<tr><td>Se bloquea en un handler sin parar</td><td>No borró <code>EXTI→PR</code> o <code>TIM→SR</code></td><td>Recordar que PR se borra con 1 y SR con 0.</td></tr>
+<tr><td>El blinky entra a la ISR apenas arranca</td><td>No borró UIF después del UG</td><td>Que vea <code>TIM4→SR</code> justo antes de habilitar el NVIC.</td></tr>
+<tr><td>Frecuencia mal en el osciloscopio</td><td>PSC/ARR sin el "−1" o reloj distinto de 16 MHz</td><td>Que compruebe el reloj real antes de culpar al código.</td></tr>
+<tr><td>Creen que el filtro del timer quita el rebote</td><td>Confunden µs con ms</td><td>Que use la calculadora del filtro y compare con el rebote medido en el osciloscopio.</td></tr>
+</table></div>
+</section>
+
+<section id="preguntas">
+<h2>Preguntas para guiar</h2>
+<ul class="q">
+<li>Si ARR = 999 y quieren 25 %, ¿cuánto vale CCR1? ¿Y si luego pasan a ARR = 499 sin recalcular?</li>
+<li>¿Por qué se activa CEN de último? ¿Qué podría pasar si se activa primero en el TIM1?</li>
+<li>¿Por qué TIM2 cuenta el encoder sin interrupciones y el pulsador sí necesita una?</li>
+<li>¿Qué cambia entre configurar PC13 y PB0? ¿Por qué el nombre del handler es distinto?</li>
+<li>El filtro del timer deja pasar pulsos de 16 µs o más. ¿Basta para un pulsador? ¿Y para el encoder? ¿Por qué?</li>
+<li>¿Qué pasaría con el duty si ARPE y OC1PE estuvieran apagados al cambiar de frecuencia?</li>
+<li>¿Cómo invertirían el sentido del encoder sin mover cables?</li>
+<li>¿Cuántas cuentas por paso daría <code>SMS = 001</code>? ¿Qué se tendría que cambiar en el código?</li>
+</ul>
+<div class="callout ok"><b>Para el monitor.</b> El estudiante debe llegar al código por su propio razonamiento. Usen las preguntas y el Live Watch antes de mostrar una línea. El código de abajo es referencia para ustedes y para la guía <code>GUIA_Taller_PWM_Encoder_Estudiantes.md</code>.</div>
+</section>
+
+<section id="codigo">
+<h2>Código completo</h2>
+<p>Compila sin warnings con <code>-Wall -Wextra -Wpedantic</code> en las dos variantes del pulsador (<code>SW_USE_TIM2_CH3</code> en 0 y en 1), con el proyecto CMake <code>Taller_PWM_Encoder</code> y CMSIS de STM32Cube FW_F4 V1.28.3. No se probó en la tarjeta.</p>
+<details>
+<summary>Mostrar <code>Src/main.c</code></summary>
+<pre>/**
+ ******************************************************************************
+ * @file           : main.c
+ * @author         : Miguel A. Bedoya Gonzalez --&gt; mibedoyag@unal.edu.co
+ * @brief          : Taller PWM - Encoder KY040 (TIM2) controla el duty y el
+ *                   pulsador (EXTI0) cambia la frecuencia del PWM (TIM1)
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ *
+ *** Mapeo de Pines:
+ ** PWM TIM1 - AF01:
+ * - CH1 (PWM)  -&gt; PA8
+ *
+ ** ENCODER TIM2 - AF01:
+ * - CH1 (KY040: CLK) -&gt; PA0
+ * - CH2 (KY040: DT)  -&gt; PA1
+ *
+ ** PULSADOR KY040 (SW), activo en bajo, con filtro RC externo a GND:
+ * - SW_USE_TIM2_CH3 = 0 -&gt; PB0 (EXTI0)               [por defecto]
+ * - SW_USE_TIM2_CH3 = 1 -&gt; PA2 (TIM2_CH3 - AF01, captura con filtro IC3F)
+ *
+ ** BLINKY TIM4 -&gt; PH1 (500 ms)
+ *
+ *
+ * ===================== FUNCIONAMIENTO ===================== *
+ *
+ * - TIM2 en modo encoder cuenta los flancos de CLK y DT (4 cuentas por paso).
+ *   El contador se divide entre 4 y se satura entre 0 y 100, ese valor es el
+ *   duty cycle en porcentaje.
+ *
+ * - TIM1 genera una senal PWM en PA8. Su frecuencia puede ser 500 Hz, 1 kHz
+ *   o 2 kHz (tabla arr_table). El CCR1 se calcula siempre con el ARR actual,
+ *   por eso el duty en % se conserva al cambiar de frecuencia.
+ *
+ * - Cada flanco de bajada del pulsador pasa a la siguiente frecuencia:
+ *   500 Hz -&gt; 1 kHz -&gt; 2 kHz -&gt; 500 Hz ...
+ *   Se configura igual que el boton PC13 del taller de EXTI, pero en un pin
+ *   cableado al SW del KY040. El rebote lo elimina un filtro RC externo, la ISR
+ *   solo levanta una bandera y no espera.
+ *
+ * - TIM4 hace parpadear el PH1 cada 500 ms para saber que el programa corre.
+ *
+ * Reloj del sistema: HSI 16 MHz (sin PLL), los timers reciben 16 MHz.
+ *
+ ******************************************************************************
+ */
+
+#include &lt;stdint.h&gt;
+#include &lt;stm32f4xx.h&gt;
+
+/* Seleccion del pulsador: 0 = EXTI0 en PB0, 1 = captura del TIM2_CH3 en PA2 */
+#define SW_USE_TIM2_CH3	0
+
+/* Constantes */
+#define NUM_FREQ		3		// Cantidad de frecuencias disponibles
+#define DUTY_MAX		100		// Duty maximo en %
+#define COUNTS_PER_STEP	4		// El modo TI12 cuenta 4 flancos por paso del encoder
+#define ENCODER_MAX_CNT	(DUTY_MAX * COUNTS_PER_STEP)	// Cuenta maxima del TIM2 (400)
+
+/* Variables */
+volatile uint8_t button_event = 0;	// La ISR del pulsador la pone en 1, el main la atiende y la baja
+uint8_t freq_index = 0;				// Indice de la frecuencia actual en arr_table
+uint8_t duty_percent = 0;			// Duty actual en % (0 - 100)
+const uint16_t arr_table[NUM_FREQ] = {1999, 999, 499};	// ARR para 500 Hz, 1 kHz y 2 kHz con tick de 1 us
+
+/* Maquina de estados */
+typedef enum
+{
+	STATE_READ_ENCODER = 0,
+	STATE_UPDATE_PWM,
+	STATE_CHECK_BUTTON
+} State_t;
+
+State_t current_state = STATE_READ_ENCODER;	// Siempre arranca leyendo el encoder
+
+/* Definicion de funciones */
+static void gpio_Init(void);			// GPIOH PH1 como salida (blinky)
+static void tim4_Init(void);			// TIM4 con interrupcion cada 500 ms (blinky)
+static void tim1_pwm_Init(void);		// GPIOA PA8 + TIM1 CH1 en modo PWM 1
+static void tim2_encoder_Init(void);	// GPIOA PA0, PA1 + TIM2 en modo encoder
+#if SW_USE_TIM2_CH3
+static void sw_tim2ch3_Config(void);	// GPIOA PA2 + canal 3 del TIM2 como captura con filtro
+#else
+static void exti0_Init(void);			// GPIOB PB0 + EXTI0 (flanco de bajada)
+#endif
+static void pwm_SetFrequency(uint8_t index);	// Cambia el ARR del TIM1 segun arr_table
+static void pwm_SetDuty(uint8_t percent);		// Calcula el CCR1 a partir del % y el ARR actual
+
+/* Main */
+int main(void)
+{
+	int32_t raw_count = 0;	// Cuenta del TIM2 vista con signo
+
+	gpio_Init();
+	tim1_pwm_Init();
+	tim2_encoder_Init();	// Con SW_USE_TIM2_CH3 = 1 tambien configura el pulsador
+#if !SW_USE_TIM2_CH3
+	exti0_Init();
+#endif
+	tim4_Init();			// Ultimo: las interrupciones empiezan con todo listo
+
+	while (1)
+	{
+		switch (current_state)
+		{
+		case STATE_READ_ENCODER:
+			raw_count = (int32_t) TIM2-&gt;CNT;	// CNT es de 32 bit sin signo, al girar en CCW desde 0 pasa a 0xFFFFFFFF = -1 con signo
+
+			if (raw_count &lt; 0)	// Se paso por debajo de 0, se satura en 0
+			{
+				TIM2-&gt;CNT = 0;
+				raw_count = 0;
+			}
+			else if (raw_count &gt; ENCODER_MAX_CNT)	// Se paso de 100 pasos, se satura en 100
+			{
+				TIM2-&gt;CNT = ENCODER_MAX_CNT;
+				raw_count = ENCODER_MAX_CNT;
+			}
+
+			duty_percent = (uint8_t) (raw_count / COUNTS_PER_STEP);	// 4 cuentas = 1 paso = 1 %
+			current_state = STATE_UPDATE_PWM;
+			break;
+
+		case STATE_UPDATE_PWM:
+			pwm_SetDuty(duty_percent);
+			current_state = STATE_CHECK_BUTTON;
+			break;
+
+		case STATE_CHECK_BUTTON:
+			if (button_event)
+			{
+				button_event = 0;	// Se baja la bandera para esperar otro pulso
+				freq_index = (uint8_t) ((freq_index + 1) % NUM_FREQ);
+				pwm_SetFrequency(freq_index);	// El CCR1 se recalcula en el siguiente ciclo de la FSM
+			}
+			current_state = STATE_READ_ENCODER;
+			break;
+
+		default:
+			current_state = STATE_READ_ENCODER;
+			break;
+		}
+	}
+}
+
+/*
+ * gpio_Init
+ * PH1 como salida push-pull, LED de la tarjeta (blinky)
+ */
+static void gpio_Init(void)
+{
+	RCC-&gt;AHB1ENR |= RCC_AHB1ENR_GPIOHEN;	// Reloj del GPIOH (AHB1)
+
+	GPIOH-&gt;MODER &amp;= ~GPIO_MODER_MODER1;
+	GPIOH-&gt;MODER |= GPIO_MODER_MODER1_0;	// 01: salida
+	GPIOH-&gt;OTYPER &amp;= ~GPIO_OTYPER_OT1;		// Push-pull
+	GPIOH-&gt;OSPEEDR &amp;= ~GPIO_OSPEEDER_OSPEEDR1;	// Baja velocidad
+	GPIOH-&gt;PUPDR &amp;= ~GPIO_PUPDR_PUPDR1;		// Sin pull-up ni pull-down
+	GPIOH-&gt;ODR &amp;= ~GPIO_ODR_OD1;			// Inicia en bajo
+}
+
+/*
+ * tim4_Init
+ * Evento de actualizacion cada 500 ms
+ * PSC = 15999 -&gt; tick de 1 ms, ARR = 499 -&gt; (499 + 1) x 1 ms = 500 ms
+ */
+static void tim4_Init(void)
+{
+	RCC-&gt;APB1ENR |= RCC_APB1ENR_TIM4EN;		// Reloj del TIM4 (APB1)
+
+	TIM4-&gt;PSC = 15999;						// 16 MHz / 16000 = 1 kHz
+	TIM4-&gt;ARR = 499;						// 500 ms
+	TIM4-&gt;CNT = 0;
+
+	TIM4-&gt;EGR |= TIM_EGR_UG;				// Carga el PSC (solo se aplica en un update)
+	TIM4-&gt;SR &amp;= ~TIM_SR_UIF;				// El UG levanta UIF, se limpia para no entrar a la ISR de inmediato
+
+	TIM4-&gt;DIER |= TIM_DIER_UIE;				// Interrupcion por update
+	__NVIC_EnableIRQ(TIM4_IRQn);
+
+	TIM4-&gt;CR1 |= TIM_CR1_CEN;				// Se arranca de ultimo
+}
+
+/*
+ * tim1_pwm_Init
+ * PA8 -&gt; TIM1_CH1 (AF1), PWM modo 1, 500 Hz, duty 0 %
+ * Clock TIM1: 16 MHz (APB2 sin division). PSC = 15 -&gt; tick de 1 us
+ * Periodo = (ARR + 1) x 1 us = 2000 us -&gt; 500 Hz
+ */
+static void tim1_pwm_Init(void)
+{
+	/* GPIOA PA8 como funcion alterna AF1 */
+	RCC-&gt;AHB1ENR |= RCC_AHB1ENR_GPIOAEN;	// Reloj del GPIOA (AHB1)
+
+	GPIOA-&gt;MODER &amp;= ~GPIO_MODER_MODER8;
+	GPIOA-&gt;MODER |= GPIO_MODER_MODER8_1;	// 10: funcion alterna
+
+	GPIOA-&gt;OTYPER &amp;= ~GPIO_OTYPER_OT8;		// Push-pull
+
+	GPIOA-&gt;OSPEEDR &amp;= ~GPIO_OSPEEDER_OSPEEDR8;
+	GPIOA-&gt;OSPEEDR |= GPIO_OSPEEDER_OSPEEDR8_1;	// 10: alta velocidad
+
+	GPIOA-&gt;PUPDR &amp;= ~GPIO_PUPDR_PUPDR8;		// Sin pull-up ni pull-down, el timer maneja el nivel
+
+	GPIOA-&gt;AFR[1] &amp;= ~GPIO_AFRH_AFSEL8;
+	GPIOA-&gt;AFR[1] |= GPIO_AFRH_AFSEL8_0;	// AFRH8 = 0001 -&gt; AF1 (TIM1_CH1)
+
+	/* Base de tiempo TIM1 */
+	RCC-&gt;APB2ENR |= RCC_APB2ENR_TIM1EN;		// Reloj del TIM1 (APB2)
+
+	TIM1-&gt;PSC = 15;							// 16 MHz / (15 + 1) = 1 MHz -&gt; 1 us
+	TIM1-&gt;ARR = arr_table[0];				// 1999 -&gt; 2000 us -&gt; 500 Hz
+	TIM1-&gt;CR1 &amp;= ~TIM_CR1_DIR;				// Contador ascendente
+	TIM1-&gt;CR1 |= TIM_CR1_ARPE;				// ARR con preload: el cambio de frecuencia se aplica al terminar el periodo
+
+	/* Canal 1 en PWM modo 1 */
+	TIM1-&gt;CCMR1 &amp;= ~TIM_CCMR1_CC1S;			// 00: el canal 1 es salida
+	TIM1-&gt;CCMR1 &amp;= ~TIM_CCMR1_OC1M;
+	TIM1-&gt;CCMR1 |= (TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2);	// 110: PWM modo 1 (alto mientras CNT &lt; CCR1)
+	TIM1-&gt;CCMR1 |= TIM_CCMR1_OC1PE;			// CCR1 con preload: el duty cambia solo al inicio de un periodo
+
+	TIM1-&gt;CCR1 = 0;							// Duty inicial 0 %
+
+	TIM1-&gt;CCER &amp;= ~TIM_CCER_CC1P;			// Polaridad activa en alto
+	TIM1-&gt;CCER |= TIM_CCER_CC1E;			// Habilita la salida del canal 1 hacia el pin
+
+	TIM1-&gt;BDTR |= TIM_BDTR_MOE;				// TIM1 es timer avanzado: sin MOE las salidas quedan apagadas
+
+	TIM1-&gt;EGR |= TIM_EGR_UG;				// Evento de actualizacion: carga PSC, ARR y CCR1 desde sus preload
+
+	TIM1-&gt;CR1 |= TIM_CR1_CEN;				// Se arranca de ultimo
+}
+
+/*
+ * tim2_encoder_Init
+ * PA0 -&gt; TIM2_CH1 (CLK), PA1 -&gt; TIM2_CH2 (DT), ambos AF1 con Pull-Up
+ * Modo encoder 3 (TI12): cuenta en los flancos de los dos canales
+ * -&gt; 4 cuentas por paso mecanico del KY040
+ *
+ * IC1F e IC2F: filtro digital de la entrada. Toma muestras a f_DTS/32 y solo
+ * acepta un cambio si 8 muestras seguidas coinciden: 8 x 2 us = 16 us (f_DTS = 16 MHz)
+ */
+static void tim2_encoder_Init(void)
+{
+	/* GPIOA PA0 y PA1 como funcion alterna AF1 */
+	RCC-&gt;AHB1ENR |= RCC_AHB1ENR_GPIOAEN;	// Reloj del GPIOA (AHB1)
+
+	GPIOA-&gt;MODER &amp;= ~(GPIO_MODER_MODER0 | GPIO_MODER_MODER1);
+	GPIOA-&gt;MODER |= (GPIO_MODER_MODER0_1 | GPIO_MODER_MODER1_1);	// 10: funcion alterna
+
+	GPIOA-&gt;PUPDR &amp;= ~(GPIO_PUPDR_PUPDR0 | GPIO_PUPDR_PUPDR1);
+	GPIOA-&gt;PUPDR |= (GPIO_PUPDR_PUPDR0_0 | GPIO_PUPDR_PUPDR1_0);	// 01: Pull-Up, los pines no quedan flotando
+
+	GPIOA-&gt;AFR[0] &amp;= ~(GPIO_AFRL_AFSEL0 | GPIO_AFRL_AFSEL1);
+	GPIOA-&gt;AFR[0] |= (GPIO_AFRL_AFSEL0_0 | GPIO_AFRL_AFSEL1_0);	// AFRL0 = AFRL1 = 0001 -&gt; AF1 (TIM2_CH1, TIM2_CH2)
+
+	/* Base de tiempo TIM2 (32 bit) */
+	RCC-&gt;APB1ENR |= RCC_APB1ENR_TIM2EN;		// Reloj del TIM2 (APB1)
+
+	TIM2-&gt;PSC = 0;							// El encoder no se divide
+	TIM2-&gt;ARR = 0xFFFFFFFF;					// Rango completo de 32 bit
+	TIM2-&gt;CNT = 0;
+
+	/* Canales 1 y 2 como entradas */
+	TIM2-&gt;CCMR1 &amp;= ~(TIM_CCMR1_CC1S | TIM_CCMR1_CC2S);
+	TIM2-&gt;CCMR1 |= (TIM_CCMR1_CC1S_0 | TIM_CCMR1_CC2S_0);	// 01: CC1 en TI1 y CC2 en TI2 (directo)
+
+	TIM2-&gt;CCMR1 &amp;= ~(TIM_CCMR1_IC1F | TIM_CCMR1_IC2F);
+	TIM2-&gt;CCMR1 |= (TIM_CCMR1_IC1F | TIM_CCMR1_IC2F);		// Filtro 1111 (maximo): f_DTS/32 con N = 8
+
+	TIM2-&gt;CCER &amp;= ~(TIM_CCER_CC1P | TIM_CCER_CC1NP | TIM_CCER_CC2P | TIM_CCER_CC2NP);	// Sin inversion (si cuenta al reves, se activa CC1P)
+	TIM2-&gt;CCER |= (TIM_CCER_CC1E | TIM_CCER_CC2E);			// Habilita las capturas de los dos canales
+
+	/* Modo encoder */
+	TIM2-&gt;SMCR &amp;= ~TIM_SMCR_SMS;
+	TIM2-&gt;SMCR |= (TIM_SMCR_SMS_0 | TIM_SMCR_SMS_1);		// 011: encoder mode 3 (cuenta con TI1 y TI2)
+
+#if SW_USE_TIM2_CH3
+	sw_tim2ch3_Config();					// El canal 3 se configura antes de arrancar el contador
+#endif
+
+	TIM2-&gt;CR1 |= TIM_CR1_CEN;				// Se arranca de ultimo
+}
+
+#if SW_USE_TIM2_CH3
+/*
+ * sw_tim2ch3_Config
+ * Pulsador en PA2 -&gt; TIM2_CH3 (AF1), captura en flanco de bajada con filtro IC3F
+ * El canal 3 es independiente del par CH1/CH2 del encoder, no lo afecta.
+ * Con CC3IE se genera una interrupcion (CC3IF) en cada flanco aceptado.
+ */
+static void sw_tim2ch3_Config(void)
+{
+	RCC-&gt;AHB1ENR |= RCC_AHB1ENR_GPIOAEN;	// Reloj del GPIOA (AHB1)
+
+	GPIOA-&gt;MODER &amp;= ~GPIO_MODER_MODER2;
+	GPIOA-&gt;MODER |= GPIO_MODER_MODER2_1;	// 10: funcion alterna
+
+	GPIOA-&gt;PUPDR &amp;= ~GPIO_PUPDR_PUPDR2;
+	GPIOA-&gt;PUPDR |= GPIO_PUPDR_PUPDR2_0;	// 01: Pull-Up, en reposo es 1
+
+	GPIOA-&gt;AFR[0] &amp;= ~GPIO_AFRL_AFSEL2;
+	GPIOA-&gt;AFR[0] |= GPIO_AFRL_AFSEL2_0;	// AFRL2 = 0001 -&gt; AF1 (TIM2_CH3)
+
+	TIM2-&gt;CCMR2 &amp;= ~TIM_CCMR2_CC3S;
+	TIM2-&gt;CCMR2 |= TIM_CCMR2_CC3S_0;		// 01: CC3 es entrada en TI3
+
+	TIM2-&gt;CCMR2 &amp;= ~TIM_CCMR2_IC3F;
+	TIM2-&gt;CCMR2 |= TIM_CCMR2_IC3F;			// Filtro 1111, el mismo de los canales del encoder
+
+	TIM2-&gt;CCER &amp;= ~TIM_CCER_CC3NP;
+	TIM2-&gt;CCER |= TIM_CCER_CC3P;			// CC3P = 1, CC3NP = 0: flanco de bajada (se presiona)
+	TIM2-&gt;CCER |= TIM_CCER_CC3E;			// Habilita la captura del canal 3
+
+	TIM2-&gt;SR &amp;= ~TIM_SR_CC3IF;				// Limpia la bandera antes de habilitar la interrupcion
+	TIM2-&gt;DIER |= TIM_DIER_CC3IE;			// Interrupcion por captura del canal 3
+	__NVIC_EnableIRQ(TIM2_IRQn);
+}
+#else
+/*
+ * exti0_Init
+ * PB0 (SW del KY040) -&gt; EXTI0, flanco de bajada. Es la misma secuencia del
+ * boton PC13 (EXTI13), cambia el pin, la linea y el registro EXTICR.
+ * PC13 ya tiene pull-up en la tarjeta; PB0 es un cable al KY040, por eso
+ * se activa el Pull-Up interno.
+ */
+static void exti0_Init(void)
+{
+	/* GPIOB PB0 como entrada con Pull-Up */
+	RCC-&gt;AHB1ENR |= RCC_AHB1ENR_GPIOBEN;	// Reloj del GPIOB (AHB1)
+
+	GPIOB-&gt;MODER &amp;= ~GPIO_MODER_MODER0;		// 00: entrada
+
+	GPIOB-&gt;PUPDR &amp;= ~GPIO_PUPDR_PUPDR0;
+	GPIOB-&gt;PUPDR |= GPIO_PUPDR_PUPDR0_0;	// 01: Pull-Up, en reposo es 1 y al presionar baja a 0
+
+	/* Conexion de PB0 a la linea EXTI0 */
+	RCC-&gt;APB2ENR |= RCC_APB2ENR_SYSCFGEN;	// El mux de EXTI esta en SYSCFG (APB2)
+
+	SYSCFG-&gt;EXTICR[0] &amp;= ~SYSCFG_EXTICR1_EXTI0;
+	SYSCFG-&gt;EXTICR[0] |= SYSCFG_EXTICR1_EXTI0_PB;	// EXTI0 toma el pin 0 del puerto B
+
+	EXTI-&gt;RTSR &amp;= ~EXTI_RTSR_TR0;			// Sin disparo por flanco de subida
+	EXTI-&gt;FTSR |= EXTI_FTSR_TR0;			// Disparo por flanco de bajada (el boton conecta PB0 a GND)
+
+	EXTI-&gt;PR = EXTI_PR_PR0;					// Limpia la bandera pendiente (se limpia escribiendo 1)
+	EXTI-&gt;IMR |= EXTI_IMR_MR0;				// Desenmascara la linea 0
+
+	__NVIC_EnableIRQ(EXTI0_IRQn);			// Habilita la interrupcion de la linea 0 en el NVIC
+}
+#endif
+
+/*
+ * pwm_SetFrequency
+ * ARR nuevo desde arr_table. Con ARPE = 1 se aplica al terminar el periodo actual
+ */
+static void pwm_SetFrequency(uint8_t index)
+{
+	if (index &lt; NUM_FREQ)
+	{
+		TIM1-&gt;ARR = arr_table[index];
+	}
+}
+
+/*
+ * pwm_SetDuty
+ * CCR1 = (ARR + 1) x duty / 100
+ * 0 % -&gt; CCR1 = 0 (siempre bajo), 100 % -&gt; CCR1 = ARR + 1 (siempre alto)
+ */
+static void pwm_SetDuty(uint8_t percent)
+{
+	uint32_t period_ticks = 0;
+
+	if (percent &gt; DUTY_MAX)
+	{
+		percent = DUTY_MAX;
+	}
+
+	period_ticks = (uint32_t) arr_table[freq_index] + 1;
+	TIM1-&gt;CCR1 = (period_ticks * percent) / DUTY_MAX;
+}
+
+/* Interrupciones */
+
+/* Blinky: cada 500 ms alterna PH1 */
+void TIM4_IRQHandler(void)
+{
+	if (TIM4-&gt;SR &amp; TIM_SR_UIF)
+	{
+		TIM4-&gt;SR &amp;= ~TIM_SR_UIF;			// Limpia la bandera
+		GPIOH-&gt;ODR ^= GPIO_ODR_OD1;
+	}
+}
+
+#if SW_USE_TIM2_CH3
+/* Pulsador por captura del canal 3 del TIM2 */
+void TIM2_IRQHandler(void)
+{
+	if (TIM2-&gt;SR &amp; TIM_SR_CC3IF)
+	{
+		TIM2-&gt;SR &amp;= ~TIM_SR_CC3IF;			// Limpia la bandera
+		button_event = 1;
+	}
+}
+#else
+/* Pulsador por EXTI0 */
+void EXTI0_IRQHandler(void)
+{
+	if (EXTI-&gt;PR &amp; EXTI_PR_PR0)				// Verifica que la linea 0 genero la interrupcion
+	{
+		EXTI-&gt;PR = EXTI_PR_PR0;				// Limpia la bandera pendiente (escribiendo 1)
+		button_event = 1;
+	}
+}
+#endif</pre>
+</details>
+</section>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
