@@ -42,10 +42,10 @@
 <text x="445" y="52">FSM (main)</text><text x="445" y="68">duty = CNT/4</text>
 <text x="625" y="52">TIM1</text><text x="625" y="68">CCR1 · ARR</text>
 <text x="770" y="52">PA8</text><text x="770" y="68">PWM</text>
-<text x="70" y="212">KY040 SW + RC</text><text x="70" y="228">PB0</text>
+<text x="70" y="212">KY040 SW</text><text x="70" y="228">PB0</text>
 <text x="255" y="212">EXTI0</text><text x="255" y="228">ISR</text>
 <text x="445" y="212">button_flag</text><text x="445" y="228">freq_index</text>
-<text x="70" y="288">TIM4</text><text x="70" y="304">500 ms</text>
+<text x="70" y="288">TIM4</text><text x="70" y="304">1 ms</text>
 <text x="255" y="288">PH1</text><text x="255" y="304">blinky</text></g>
 <g text-anchor="middle"><text x="159" y="47">CH1 / CH2</text><text x="349" y="47">lee CNT</text><text x="539" y="47">escribe</text><text x="159" y="207">flanco ↓</text><text x="349" y="207">bandera</text><text x="159" y="284">ISR</text></g>
 <text x="520" y="115">cambia ARR</text>
@@ -61,7 +61,7 @@
 <tr><td>TIM2_CH2</td><td>PA1 · AF1</td><td>KY040 DT</td><td>Segundo canal del par TI1/TI2.</td></tr>
 <tr><td>EXTI0</td><td>PB0</td><td>KY040 SW</td><td>La línea EXTI0 admite el pin 0 de cualquier puerto. PB0 evita confundirlo con PA0 del encoder.</td></tr>
 <tr><td>TIM2_CH3</td><td>PA2 · AF1</td><td>KY040 SW (variante)</td><td>Con <code>SW_USE_TIM2_CH3 = 1</code> el pulsador entra por captura con filtro, sin EXTI.</td></tr>
-<tr><td>GPIO</td><td>PH1</td><td>Blinky</td><td>LED de la tarjeta, alterna cada 500 ms por TIM4.</td></tr>
+<tr><td>GPIO</td><td>PH1</td><td>Blinky</td><td>LED de la tarjeta, alterna cada 500 ms (TIM4 cuenta 500 ticks de 1 ms).</td></tr>
 </table></div>
 <p>El micro corre a <b>HSI 16 MHz</b>, sin PLL y sin <code>SystemClock_Config</code> (el <code>SystemInit</code> del startup está vacío). APB1 y APB2 tienen divisor 1, así que <b>todos los timers reciben 16 MHz</b>. Si el reloj cambia, hay que rehacer todas las cuentas.</p>
 </section>
@@ -301,13 +301,13 @@ duty_percent = raw_count / 4;</pre>
 <li>Sirve contra ruido eléctrico rápido: picos de pocos µs en cables largos o al conmutar cargas.</li>
 <li><b>No elimina el rebote mecánico.</b> Un contacto rebota entre 1 y 10 ms; con 16 µs de filtro cada rebote largo pasa como un flanco válido. En la Tarea3 se creía que "15 y 30 ciclos" bastaban, pero son 16 µs.</li>
 <li>El encoder funciona igual aunque rebote, porque cada rebote es +1 y luego −1 en la cuenta de cuadratura y se compensan. Un contador de eventos como el pulsador no se compensa: cada rebote cuenta.</li>
-<li>Por eso el pulsador lleva un <b>filtro RC externo</b> y no depende del filtro del timer.</li>
+<li>Por eso el pulsador lleva un <b>antirrebote por software</b> (ventana de 50 ms con <code>ms_ticks</code>) y no depende del filtro del timer.</li>
 </ul>
-<div class="callout ok"><b>Para qué sirve la variante TIM2_CH3.</b> Muestra que el pulsador puede entrar por el mismo periférico del encoder, con el mismo filtro y sin EXTI, y permite comparar ambos caminos. No sustituye al RC.</div>
+<div class="callout ok"><b>Para qué sirve la variante TIM2_CH3.</b> Muestra que el pulsador puede entrar por el mismo periférico del encoder, con el mismo filtro y sin EXTI, y permite comparar ambos caminos. No sustituye al antirrebote por software, que también aplica a esta variante.</div>
 </section>
 
 <section id="boton">
-<h2>Pulsador: EXTI0 y filtro RC</h2>
+<h2>Pulsador: EXTI0 y antirrebote por software</h2>
 <p>La configuración es la del botón de usuario PC13 del taller de EXTI, en otro pin. El pulsador a tierra con Pull-Up lee 1 en reposo y 0 al presionar, así que se interrumpe en <b>flanco de bajada</b>.</p>
 
 <h3>PC13 contra PB0</h3>
@@ -319,7 +319,7 @@ duty_percent = raw_count / 4;</pre>
 <tr><td>EXTI→FTSR/RTSR/PR/IMR</td><td>TR13 / PR13 / MR13</td><td>TR0 / PR0 / MR0</td><td>Bit de la línea.</td></tr>
 <tr><td>NVIC</td><td>EXTI15_10_IRQn</td><td>EXTI0_IRQn</td><td>Las líneas 5-9 y 10-15 comparten vector; la 0 tiene el suyo.</td></tr>
 <tr><td>ISR</td><td><code>EXTI15_10_IRQHandler</code></td><td><code>EXTI0_IRQHandler</code></td><td>El nombre lo define el vector en el startup.</td></tr>
-<tr><td>Rebote</td><td>RC en la placa</td><td>RC externo en el protoboard</td><td>El cable del KY040 no trae filtro.</td></tr>
+<tr><td>Rebote</td><td>RC en la placa</td><td>Filtro por software (<code>DEBOUNCE_MS</code>)</td><td>El cable del KY040 no trae filtro y no hay capacitor disponible.</td></tr>
 </table></div>
 
 <h3>Registros de <code>exti0_Init</code></h3>
@@ -336,38 +336,45 @@ duty_percent = raw_count / 4;</pre>
 </table></div>
 <div class="callout"><b>Borrar banderas.</b> <code>EXTI→PR</code> es "write 1 to clear". <code>TIMx→SR</code> es "write 0 to clear". Los estudiantes ya vieron el segundo en timers y se confunden con el primero.</div>
 
-<h3>Filtro RC externo</h3>
+<h3>Antirrebote por software</h3>
+<p>Sin capacitor, el rebote se descarta <b>con tiempo</b>: el primer flanco de bajada es la pulsación y los que lleguen en los siguientes 50 ms se ignoran. No se agrega ningún timer: TIM4 pasa a ser la base de tiempo de 1 ms (<code>ms_ticks</code>) y de ahí también sale el blinky de 500 ms.</p>
 <figure>
-<svg viewBox="0 0 520 200" role="img" aria-label="Esquema del pulsador SW del KY040 con pull-up a 3V3, pulsador a tierra, condensador de 100 nF en paralelo con el pulsador y la conexión al pin PB0">
-<defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+<svg viewBox="0 0 560 190" role="img" aria-label="Diagrama de tiempos: un click genera cuatro flancos de bajada por rebote; solo el primero se acepta y los siguientes, dentro de 50 ms, se descartan">
+<defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
 <g fill="none" stroke="currentColor" stroke-width="1.6">
-<line x1="60" y1="22" x2="60" y2="38"/><rect x="48" y="38" width="24" height="44"/><line x1="60" y1="82" x2="60" y2="100"/>
-<line x1="60" y1="100" x2="440" y2="100" marker-end="url(#ar2)"/>
-<line x1="180" y1="100" x2="180" y2="118"/><rect x="168" y="118" width="24" height="26"/><line x1="180" y1="144" x2="180" y2="160"/><line x1="164" y1="160" x2="196" y2="160"/>
-<line x1="320" y1="100" x2="320" y2="122"/><line x1="304" y1="122" x2="336" y2="122"/><line x1="304" y1="132" x2="336" y2="132"/><line x1="320" y1="132" x2="320" y2="160"/><line x1="304" y1="160" x2="336" y2="160"/>
+<polyline points="20,40 80,40 80,90 92,90 92,40 104,40 104,90 114,90 114,40 124,40 124,90 540,90"/>
+<line x1="80" y1="130" x2="380" y2="130" marker-start="url(#ar3)" marker-end="url(#ar3)"/>
+<line x1="80" y1="100" x2="80" y2="140" stroke-dasharray="3 3"/><line x1="380" y1="100" x2="380" y2="140" stroke-dasharray="3 3"/>
 </g>
-<circle cx="180" cy="100" r="3" fill="currentColor"/><circle cx="320" cy="100" r="3" fill="currentColor"/><circle cx="60" cy="100" r="3" fill="currentColor"/>
-<text x="80" y="30">3V3</text><text x="80" y="64">R pull-up</text>
-<text x="202" y="135">SW</text><text x="346" y="132">C = 100 nF</text>
-<text x="445" y="104">PB0</text><text x="180" y="180" text-anchor="middle">GND</text><text x="320" y="180" text-anchor="middle">GND</text>
+<text x="20" y="30">PB0 (1 = reposo)</text>
+<text x="70" y="112">1 acepta</text><text x="96" y="76" font-size="11">2</text><text x="108" y="76" font-size="11">3</text><text x="128" y="76" font-size="11">4: se descartan</text>
+<text x="230" y="154" text-anchor="middle">ventana DEBOUNCE_MS = 50 ms</text>
+<text x="20" y="180">button_flag se levanta 4 veces; get_next_event() deja pasar solo la primera.</text>
 </svg>
-<figcaption>El condensador va entre el pin y GND, en paralelo con el pulsador. Al soltar, se carga por el pull-up (interno de unos 40 kΩ, o 10 kΩ si el módulo lo trae): τ = R·C entre 1 y 4 ms. Al presionar se descarga rápido por el contacto.</figcaption>
+<figcaption>Los rebotes duran 1 a 10 ms, mucho menos que la ventana de 50 ms. Una pulsación humana dura más de 100 ms, por eso no se pierden clicks rápidos.</figcaption>
 </figure>
-
-<div class="callout"><b>Lo que el RC no resuelve.</b> Suaviza el rebote, pero el Schmitt trigger del pin puede cruzar el umbral más de una vez con contactos muy sucios. Si aun así se salta una frecuencia, el siguiente paso es subir C a 470 nF. No se agrega ningún timer ni espera por software.</div>
+<div class="scroll"><table>
+<tr><th>Pieza</th><th>Qué hace</th><th>Por qué así</th></tr>
+<tr><td><code>TIM4→ARR = 999</code></td><td>Interrupción cada 1 ms</td><td>Nunca ARR = 0: el manual dice que el contador queda bloqueado. Reutiliza el TIM4 del blinky: no hay un timer extra para el antirrebote.</td></tr>
+<tr><td><code>volatile uint32_t ms_ticks</code></td><td>Milisegundos desde el arranque</td><td><code>volatile</code>: la ISR lo cambia. 32 bit: la lectura es atómica en Cortex-M.</td></tr>
+<tr><td><code>static uint32_t last_button_ms = 0 - DEBOUNCE_MS</code></td><td>Instante de la última pulsación aceptada</td><td>El valor inicial hace que la primera pulsación siempre pase (resta sin signo).</td></tr>
+<tr><td><code>(ms_ticks - last_button_ms) &gt;= DEBOUNCE_MS</code></td><td>Filtro dentro de <code>get_next_event()</code></td><td>La resta sin signo es correcta aunque <code>ms_ticks</code> se desborde (49 días). Va en el driver porque la ISR solo registra.</td></tr>
+</table></div>
+<div class="callout"><b>Cómo se muestra al estudiante.</b> Que ponga <code>DEBOUNCE_MS</code> en 0 y mire cuántas veces salta <code>freq_index</code> por click; luego 50. Y que pruebe 300 ms para ver cómo se pierden clicks rápidos: el filtro es un compromiso.</div>
+<div class="callout ok"><b>Si algún día hay capacitor.</b> Un RC de 100 nF entre PB0 y GND (τ ≈ 1 a 4 ms con el pull-up interno) ayuda a suavizar el pin, pero no es necesario: el filtro por software ya lo resuelve.</div>
 </section>
 
 <section id="blinky">
 <h2>Blinky con TIM4</h2>
-<p>PH1 alterna cada 500 ms para saber que el programa corre. La ISR no cambia el LED: solo deja <code>blink_flag</code>. El LED lo cambia la FSM en <code>STATE_BLINK</code>, así se respeta la regla de la presentación (ninguna lógica en la ISR).</p>
+<p>PH1 alterna cada 500 ms para saber que el programa corre. TIM4 interrumpe cada <b>1 ms</b>: la ISR cuenta <code>ms_ticks</code> y cada 500 ticks deja <code>blink_flag</code>. La ISR no cambia el LED. El LED lo cambia la FSM en <code>STATE_BLINK</code>, así se respeta la regla de la presentación (ninguna lógica en la ISR).</p>
 <div class="scroll"><table>
 <tr><th>Registro</th><th>Valor</th><th>Para qué</th><th>Por qué así</th></tr>
 <tr><td>RCC→AHB1ENR</td><td>GPIOHEN</td><td>Reloj de GPIOH</td><td>Sin reloj el puerto ignora las escrituras.</td></tr>
 <tr><td>GPIOH→MODER</td><td>MODER1 = 01</td><td>PH1 como salida</td><td>El LED de la tarjeta está en PH1.</td></tr>
 <tr><td>GPIOH→OTYPER / OSPEEDR / PUPDR</td><td>0 / 00 / 00</td><td>Push-pull, baja velocidad, sin pull</td><td>Un LED no necesita más.</td></tr>
 <tr><td>RCC→APB1ENR</td><td>TIM4EN</td><td>Reloj del TIM4</td><td>TIM4 está en APB1.</td></tr>
-<tr><td>TIM4→PSC</td><td>15999</td><td>Tick de 1 ms</td><td>16 MHz / 16000 = 1 kHz.</td></tr>
-<tr><td>TIM4→ARR</td><td>499</td><td>500 ms</td><td>(499 + 1) × 1 ms.</td></tr>
+<tr><td>TIM4→PSC</td><td>15</td><td>Tick de 1 µs</td><td>16 MHz / 16 = 1 MHz.</td></tr>
+<tr><td>TIM4→ARR</td><td>999</td><td>Interrupción cada 1 ms</td><td>(999 + 1) × 1 µs = 1 ms. Nunca 0: con ARR = 0 el contador queda bloqueado. El blinky de 500 ms y el antirrebote se cuentan con <code>ms_ticks</code>.</td></tr>
 <tr><td>TIM4→EGR / SR</td><td>UG = 1, luego UIF = 0</td><td>Carga el PSC y borra la bandera</td><td>El PSC solo se aplica en un update, y ese update levanta UIF. Si no se borra, entra una ISR falsa al habilitar el NVIC.</td></tr>
 <tr><td>TIM4→DIER</td><td>UIE = 1</td><td>Interrupción por update</td><td>Primer interruptor.</td></tr>
 <tr><td>NVIC</td><td><code>__NVIC_EnableIRQ(TIM4_IRQn)</code></td><td>Permite la IRQ en el core</td><td>Segundo interruptor.</td></tr>
@@ -388,6 +395,8 @@ duty_percent = raw_count / 4;</pre>
 <tr><td>#define ENCODER_MAX_CNT (100 * 4)</td><td>400</td><td>100 pasos por 4 cuentas: el tope del contador del TIM2.</td></tr>
 <tr><td>static State_t current_state</td><td>Estado de la FSM</td><td><code>static</code>: nadie más lo toca (scope mínimo).</td></tr>
 <tr><td>static uint8_t state_entry_flag = 1</td><td>Bandera de [ENTER]</td><td>Inicia en 1 para que IDLE ejecute su entrada la primera vez.</td></tr>
+<tr><td>#define DEBOUNCE_MS 50 / BLINK_PERIOD_MS 500</td><td>Ventana del antirrebote y periodo del blinky</td><td>Constantes con nombre, no números mágicos.</td></tr>
+<tr><td>volatile uint32_t ms_ticks; static uint32_t last_button_ms</td><td>Reloj en ms y última pulsación aceptada</td><td>Base del antirrebote. <code>last_button_ms = 0 - DEBOUNCE_MS</code> deja pasar la primera pulsación.</td></tr>
 <tr><td>volatile uint8_t button_flag, blink_flag</td><td>Banderas de las ISR</td><td><code>volatile</code>: cambian fuera del flujo del programa.</td></tr>
 <tr><td>const uint16_t arr_table[3] = {1999, 999, 499}</td><td>ARR de cada frecuencia</td><td>Con PSC = 15: periodos de 2000, 1000 y 500 µs. <code>const</code> la deja en Flash.</td></tr>
 </table></div>
@@ -409,9 +418,10 @@ duty_percent = raw_count / 4;</pre>
 <h3>Drivers</h3>
 <div class="scroll"><table>
 <tr><th>Función / línea</th><th>Qué hace</th><th>Por qué</th></tr>
+<tr><td>get_next_event: if ((ms_ticks - last_button_ms) &gt;= DEBOUNCE_MS)</td><td>Acepta la pulsación solo si pasaron 50 ms desde la última</td><td>Descarta los rebotes del contacto. Resta sin signo: no falla al desbordar <code>ms_ticks</code>.</td></tr>
 <tr><td>get_next_event: encoder_ReadPercent()</td><td>Lee el encoder antes de la sección crítica</td><td>El TIM2 no genera interrupción: se lee por consulta.</td></tr>
 <tr><td>__disable_irq() … __enable_irq()</td><td>Sección crítica</td><td>La ISR no puede llegar entre leer y borrar la bandera.</td></tr>
-<tr><td>if / else if / else if</td><td>Pulsador, encoder, blinky</td><td>Prioridad. Lo que no se atiende queda pendiente.</td></tr>
+<tr><td>if (…) / if ((ev == EV_NONE) &amp;&amp; …)</td><td>Pulsador, encoder, blinky</td><td>Prioridad sin inanición: un pulsador rechazado (rebote o ruido en PB0) no bloquea al encoder ni al blinky. El pin se lee con <code>SW_PIN_IS_LOW()</code>: una pulsación real sigue en bajo, el ruido no.</td></tr>
 <tr><td>(int32_t) TIM2-&gt;CNT</td><td>Cuenta con signo</td><td>Girar a la izquierda desde 0 deja <code>0xFFFFFFFF</code>, que con signo es −1 y se detecta.</td></tr>
 <tr><td>TIM2-&gt;CNT = 0 / = 400</td><td>Satura y reescribe el contador</td><td>Así el contador no se acumula fuera del rango útil.</td></tr>
 <tr><td>raw_count / COUNTS_PER_STEP</td><td>Cuentas a porcentaje</td><td>Modo TI12: 4 cuentas = 1 paso = 1 %.</td></tr>
@@ -423,7 +433,7 @@ duty_percent = raw_count / 4;</pre>
 <h3>ISR</h3>
 <div class="scroll"><table>
 <tr><th>ISR</th><th>Qué hace</th><th>Por qué</th></tr>
-<tr><td>TIM4_IRQHandler</td><td>if (SR &amp; UIF) → SR &amp;= ~UIF → blink_flag = 1</td><td>Se usa <code>&amp;</code> (no <code>&amp;&amp;</code>) para mirar el bit. UIF se baja con 0.</td></tr>
+<tr><td>TIM4_IRQHandler</td><td>if (SR &amp; UIF) → SR &amp;= ~UIF → ms_ticks++ → cada 500: blink_flag = 1</td><td>Se usa <code>&amp;</code> (no <code>&amp;&amp;</code>) para mirar el bit. UIF se baja con 0.</td></tr>
 <tr><td>EXTI0_IRQHandler</td><td>if (PR &amp; PR0) → PR = PR0 → button_flag = 1</td><td>PR se baja escribiendo 1. Sin esto la ISR se repite sin parar.</td></tr>
 <tr><td>TIM2_IRQHandler (variante)</td><td>if (SR &amp; CC3IF) → SR &amp;= ~CC3IF → button_flag = 1</td><td>Misma idea, otra bandera.</td></tr>
 </table></div>
@@ -475,7 +485,7 @@ duty_percent = raw_count / 4;</pre>
 <tr><td>PA8 no responde</td><td><code>AFR[0]</code> en vez de <code>AFR[1]</code></td><td>Que calcule en qué registro cae el pin 8.</td></tr>
 <tr><td>El duty cambia 4 veces más rápido</td><td>Olvidó <code>/4</code></td><td>Que mire <code>TIM2→CNT</code> en Live Watch al dar un click.</td></tr>
 <tr><td>La cuenta se va a números enormes</td><td>No satura o compara como <code>uint</code></td><td>Que gire a la izquierda desde 0 y mire CNT (0xFFFFFFFF).</td></tr>
-<tr><td>Un click salta dos frecuencias</td><td>Rebote sin RC</td><td>Que cuente cuántas veces entra la ISR con un breakpoint, y que ponga el condensador.</td></tr>
+<tr><td>Un click salta dos frecuencias</td><td><code>DEBOUNCE_MS</code> en 0 o filtro mal restado</td><td>Que cuente cuántas veces entra la ISR con un breakpoint y que mire <code>last_button_ms</code>.</td></tr>
 <tr><td>La ISR del pulsador nunca corre</td><td>Falta SYSCFG, <code>IMR</code> o NVIC</td><td>Los tres interruptores: línea, IMR, NVIC. Que mire <code>EXTI→PR</code>.</td></tr>
 <tr><td>Se bloquea en un handler sin parar</td><td>No borró <code>EXTI→PR</code> o <code>TIM→SR</code></td><td>Recordar que PR se borra con 1 y SR con 0.</td></tr>
 <tr><td>El blinky entra a la ISR apenas arranca</td><td>No borró UIF después del UG</td><td>Que vea <code>TIM4→SR</code> justo antes de habilitar el NVIC.</td></tr>
@@ -540,7 +550,7 @@ duty_percent = raw_count / 4;</pre>
  * - CH1 (KY040: CLK) -&gt; PA0
  * - CH2 (KY040: DT)  -&gt; PA1
  *
- ** PULSADOR KY040 (SW), activo en bajo, con filtro RC externo (100 nF a GND):
+ ** PULSADOR KY040 (SW), activo en bajo, antirrebote por software (sin capacitor):
  * - SW_USE_TIM2_CH3 = 0 -&gt; PB0 (EXTI0)                        [por defecto]
  * - SW_USE_TIM2_CH3 = 1 -&gt; PA2 (TIM2_CH3 - AF01, captura con filtro IC3F)
  *
@@ -559,7 +569,12 @@ duty_percent = raw_count / 4;</pre>
  * - Cada flanco de bajada del pulsador pasa a la siguiente frecuencia:
  *   500 Hz -&gt; 1 kHz -&gt; 2 kHz -&gt; 500 Hz ...
  *
- * - TIM4 hace parpadear PH1 cada 500 ms para saber que el programa corre.
+ * - TIM4 es la base de tiempo: interrumpe cada 1 ms, cuenta milisegundos (ms_ticks)
+ *   y cada 500 ms hace parpadear PH1 para saber que el programa corre.
+ *
+ * - Antirrebote del pulsador por software: un contacto mecánico rebota de 1 a 10 ms
+ *   y genera varios flancos por una sola pulsación. get_next_event() acepta una
+ *   pulsación solo si pasaron DEBOUNCE_MS (50 ms) desde la última aceptada.
  *
  * - Reloj del sistema: HSI 16 MHz (sin PLL), los timers reciben 16 MHz.
  *
@@ -589,7 +604,16 @@ duty_percent = raw_count / 4;</pre>
 /* Selección del pulsador: 0 = EXTI0 en PB0, 1 = captura del TIM2_CH3 en PA2 */
 #define SW_USE_TIM2_CH3	0 //Con 0 se compila la versión con EXTI, con 1 la versión con captura del canal 3
 
+/* Lectura del nivel del pulsador: un pico de ruido dura microsegundos, una pulsación real mantiene el pin en bajo */
+#if SW_USE_TIM2_CH3
+#define SW_PIN_IS_LOW()	((GPIOA-&gt;IDR &amp; GPIO_IDR_ID2) == 0) //Versión captura: el pulsador está en PA2
+#else
+#define SW_PIN_IS_LOW()	((GPIOB-&gt;IDR &amp; GPIO_IDR_ID0) == 0) //Versión EXTI: el pulsador está en PB0
+#endif
+
 /* Constantes */
+#define DEBOUNCE_MS		50 //Tiempo mínimo entre dos pulsaciones válidas: mayor que el rebote (1-10 ms), menor que una pulsación humana (&gt;100 ms)
+#define BLINK_PERIOD_MS	500 //Periodo del blinky de PH1 en milisegundos (se cuenta con ms_ticks)
 #define NUM_FREQ		3 //Cantidad de frecuencias disponibles para el PWM (500 Hz, 1 kHz, 2 kHz)
 #define DUTY_MAX		100 //Duty máximo en porcentaje
 #define COUNTS_PER_STEP	4 //El modo TI12 cuenta 4 flancos por cada paso mecánico del encoder
@@ -605,7 +629,7 @@ typedef enum { //Lista de estados posibles, cada nombre vale un entero (0, 1, 2.
 	STATE_IDLE, //Reposo: espera un evento sin hacer nada más (no bloquea)
 	STATE_UPDATE_DUTY, //Atiende el giro del encoder: actualiza el duty del PWM
 	STATE_CHANGE_FREQ, //Atiende el pulsador: pasa a la siguiente frecuencia del PWM
-	STATE_BLINK, //Atiende el tick del TIM4: cambia el estado del LED PH1
+	STATE_BLINK, //Atiende el tick de 500 ms: cambia el estado del LED PH1
 	STATE_ERROR, //Estado inválido (trampa de hardware): se recupera hacia STATE_IDLE
 	NUM_STATES //Centinela: cantidad de estados, sirve para validar el rango
 } State_t; //Nombre del tipo: current_state solo puede recibir valores de este enum
@@ -614,7 +638,7 @@ typedef enum { //Lista de estados posibles, cada nombre vale un entero (0, 1, 2.
 typedef enum { //Lista de eventos posibles, cada nombre vale un entero (0, 1, 2...)
 	EV_NONE, //No ha ocurrido nada
 	EV_ENCODER_CHANGED, //El valor del encoder (en %) cambió respecto al duty actual
-	EV_BUTTON_PRESS, //El pulsador del KY040 fue presionado (flanco de bajada)
+	EV_BUTTON_PRESS, //El pulsador del KY040 fue presionado (flanco de bajada ya filtrado contra rebotes)
 	EV_BLINK_TICK, //Venció el tiempo del TIM4 (500 ms)
 	NUM_EVENTS //Centinela: cantidad de eventos, sirve para validar el rango
 } Event_t; //Nombre del tipo: current_event solo puede recibir valores de este enum
@@ -628,6 +652,8 @@ static uint8_t state_entry_flag = 1; //Inicia en 1 para que el primer estado tam
 
 volatile uint8_t button_flag = 0; //Bandera que deja la ISR del pulsador (volatile: cambia fuera del flujo normal del programa)
 volatile uint8_t blink_flag = 0; //Bandera que deja la ISR del TIM4 (volatile por la misma razón)
+volatile uint32_t ms_ticks = 0; //Milisegundos desde el arranque: los incrementa la ISR del TIM4 cada 1 ms (volatile: cambia fuera del flujo normal)
+static uint32_t last_button_ms = 0 - DEBOUNCE_MS; //Instante de la última pulsación aceptada; el valor inicial hace que la primera pulsación siempre pase (resta sin signo)
 
 uint8_t freq_index = 0; //Índice de la frecuencia actual dentro de arr_table
 uint8_t duty_percent = 0; //Duty actual del PWM en porcentaje (0 - 100)
@@ -644,7 +670,7 @@ static void led_Toggle(void); //Cambia el estado del LED PH1
 
 //Inicialización del hardware
 static void gpio_Init(void); //GPIOH PH1 como salida (blinky)
-static void tim4_Init(void); //TIM4 con interrupción cada 500 ms (blinky)
+static void tim4_Init(void); //TIM4 con interrupción cada 1 ms (base de tiempo para el antirrebote y el blinky de 500 ms)
 static void tim1_pwm_Init(void); //GPIOA PA8 + TIM1 CH1 en modo PWM 1
 static void tim2_encoder_Init(void); //GPIOA PA0, PA1 + TIM2 en modo encoder
 #if SW_USE_TIM2_CH3 //Compilación condicional: solo existe la versión elegida con SW_USE_TIM2_CH3
@@ -769,8 +795,10 @@ int main(void) //Punto de entrada: el startup lo llama después de copiar .data 
 /*
  * get_next_event
  * Convierte las banderas que dejan las ISR (y el cambio del encoder) en UN evento.
- * Prioridad: pulsador &gt; encoder &gt; blinky. Las banderas que no se atienden en esta
- * llamada quedan pendientes para la siguiente pasada, así no se pierde ningún evento.
+ * Aplica el antirrebote del pulsador (DEBOUNCE_MS) y descarta el ruido leyendo el nivel del pin.
+ * Prioridad: pulsador &gt; encoder &gt; blinky, pero un pulsador rechazado (rebote o ruido) NO bloquea a los demás:
+ * si el ruido en el pin levantara la bandera todo el tiempo, el encoder y el blinky nunca se atenderían.
+ * Las banderas que no se atienden en esta llamada quedan pendientes para la siguiente pasada.
  */
 static Event_t get_next_event(void)
 {
@@ -780,16 +808,22 @@ static Event_t get_next_event(void)
 	percent = encoder_ReadPercent(); //El encoder no genera interrupción: el TIM2 cuenta solo y aquí se lee su valor
 
 	__disable_irq(); //Sección crítica: leer y limpiar una bandera no puede ser interrumpido, o el evento podría perderse
-	if (button_flag == 1) //La ISR del pulsador dejó un evento pendiente
+	if (button_flag == 1) //La ISR del pulsador dejó un evento pendiente (puede ser una pulsación real o un rebote)
 	{
 		button_flag = 0; //Se baja la bandera: ya se atendió el evento
-		ev = EV_BUTTON_PRESS; //Evento más prioritario
+		if (((ms_ticks - last_button_ms) &gt;= DEBOUNCE_MS) &amp;&amp; SW_PIN_IS_LOW()) //Antirrebote: resta sin signo (segura al desbordar) de ms desde la última pulsación aceptada, y el pin debe seguir en bajo
+		{
+			last_button_ms = ms_ticks; //Pulsación válida: se guarda el instante para medir la próxima ventana de 50 ms
+			ev = EV_BUTTON_PRESS; //Evento más prioritario
+		} //Si pasaron menos de 50 ms (rebote) o el pin ya volvió a alto (ruido) se descarta: ev sigue en EV_NONE
 	}
-	else if (percent != duty_percent) //El encoder marca un valor distinto al duty que está aplicado
+
+	if ((ev == EV_NONE) &amp;&amp; (percent != duty_percent)) //Sin pulsador válido: el encoder marca un valor distinto al duty que está aplicado
 	{
 		ev = EV_ENCODER_CHANGED; //El duty se actualiza en el [ENTER] de STATE_UPDATE_DUTY
 	}
-	else if (blink_flag == 1) //La ISR del TIM4 dejó un evento pendiente
+
+	if ((ev == EV_NONE) &amp;&amp; (blink_flag == 1)) //Sin otro evento: la ISR del TIM4 dejó el evento de 500 ms pendiente
 	{
 		blink_flag = 0; //Se baja la bandera: ya se atendió el evento
 		ev = EV_BLINK_TICK; //Evento menos prioritario
@@ -880,15 +914,16 @@ static void gpio_Init(void)
 
 /*
  * tim4_Init
- * Evento de actualización cada 500 ms
- * PSC = 15999 -&gt; tick de 1 ms, ARR = 499 -&gt; (499 + 1) x 1 ms = 500 ms
+ * Evento de actualización cada 1 ms: base de tiempo del sistema (ms_ticks)
+ * PSC = 15 -&gt; tick de 1 us, ARR = 999 -&gt; (999 + 1) x 1 us = 1 ms
+ * ARR nunca puede ser 0: con ARR = 0 el contador queda bloqueado y no hay interrupciones
  */
 static void tim4_Init(void)
 {
 	RCC-&gt;APB1ENR |= RCC_APB1ENR_TIM4EN; //Activa la señal de reloj del TIM4 (bus APB1)
 
-	TIM4-&gt;PSC = 15999; //16 MHz / (15999 + 1) = 1 kHz -&gt; cada tick dura 1 ms
-	TIM4-&gt;ARR = 499; //El contador cuenta de 0 a 499: 500 ticks x 1 ms = 500 ms
+	TIM4-&gt;PSC = 15; //16 MHz / (15 + 1) = 1 MHz -&gt; cada tick dura 1 us
+	TIM4-&gt;ARR = 999; //El contador cuenta de 0 a 999 -&gt; 1000 us = 1 ms por interrupción (ARR = 0 bloquearía el contador)
 	TIM4-&gt;CNT = 0; //Reinicia el contador en 0
 
 	TIM4-&gt;EGR |= TIM_EGR_UG; //Fuerza un evento de actualización: el PSC solo se carga a su registro activo en un update
@@ -1071,13 +1106,17 @@ static void exti0_Init(void)
 
 /* Funciones ISR (solo registran el evento y regresan, sin lógica de la FSM) */
 
-/* Blinky: cada 500 ms deja la bandera para que la FSM cambie el LED */
+/* Base de tiempo: cada 1 ms cuenta el milisegundo y cada 500 ms deja la bandera del blinky */
 void TIM4_IRQHandler(void)
 {
 	if (TIM4-&gt;SR &amp; TIM_SR_UIF) //Confirma que la interrupción fue por actualización
 	{
 		TIM4-&gt;SR &amp;= ~TIM_SR_UIF; //Baja la bandera (escribiendo 0) para que la interrupción se pueda volver a generar
-		blink_flag = 1; //Deja el evento: la FSM lo convierte en EV_BLINK_TICK
+		ms_ticks++; //Un milisegundo más desde el arranque (el antirrebote mide tiempo con este contador)
+		if ((ms_ticks % BLINK_PERIOD_MS) == 0) //Cada 500 ms exactos
+		{
+			blink_flag = 1; //Deja el evento: la FSM lo convierte en EV_BLINK_TICK
+		}
 	}
 }
 
@@ -1101,7 +1140,8 @@ void EXTI0_IRQHandler(void)
 		button_flag = 1; //Deja el evento: la FSM lo convierte en EV_BUTTON_PRESS
 	}
 }
-#endif</pre>
+#endif
+</pre>
 </details>
 </section>
 </div>
