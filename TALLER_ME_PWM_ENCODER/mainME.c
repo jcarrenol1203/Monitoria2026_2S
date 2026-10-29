@@ -18,7 +18,7 @@
  * - PA12 -> EXTI12: el encoder pasa a modificar el CCR1 (ancho del pulso)
  * - PB8  -> EXTI8 : el encoder pasa a modificar el ARR  (periodo)
  *
- ** BLINKY TIM4 -> PH1 (cambia cada 250 ms en modo CCR, cada 500 ms en modo ARR)
+ ** BLINKY TIM4 -> PH1 (cambia cada 250 ms, siempre)
  *
  *
  * ===================== FUNCIONAMIENTO ===================== *
@@ -31,14 +31,14 @@
  *   periodo = (ARR + 1) us, ancho del pulso = CCR1 us. Arranca con ARR = 1999 y
  *   CCR1 = 0: 500 Hz y duty de 0 %.
  *
- * - Los modos de edición son estados de la FSM y cada fotocompuerta elige uno:
- *   STATE_EDIT_CCR (inicial, PA12): cada paso del encoder suma o resta 10 al CCR1 (ancho del pulso).
- *   STATE_EDIT_ARR          (PB8) : cada paso del encoder suma o resta 20 al ARR (periodo).
- *   El ARR se satura entre 99 y 65534, el CCR1 entre 0 y ARR + 1.
- *   La variable edit_state recuerda cuál de los dos se eligió por última vez.
+ * - Los dos modos de edición son EXCLUYENTES porque la variable edit_mode guarda uno solo:
+ *   MODE_CCR (inicial): cada paso del encoder suma o resta 10 al CCR1 (ancho del pulso).
+ *   MODE_ARR          : cada paso del encoder suma o resta 20 al ARR (periodo).
+ *   Las fotocompuertas eligen el modo (PA12 -> CCR, PB8 -> ARR) pasando por STATE_EDIT_CCR o
+ *   STATE_EDIT_ARR, que solo cambian edit_mode. STATE_UPDATE_PWM consulta edit_mode y modifica
+ *   el CCR1 o el ARR. El ARR se satura entre 99 y 65534, el CCR1 entre 0 y ARR + 1.
  *
- * - TIM4 interrumpe cada 250 ms en STATE_EDIT_CCR y cada 500 ms en STATE_EDIT_ARR (cada
- *   estado cambia su ARR al entrar). El LED PH1 muestra el modo: cambia en cada interrupción.
+ * - TIM4 interrumpe cada 250 ms, sin importar el modo. El LED PH1 cambia en cada interrupción.
  *
  * - Reloj del sistema: HSI 16 MHz (sin PLL), los timers reciben 16 MHz.
  *
@@ -52,18 +52,18 @@
  * STATE_IDLE es el centro: es el único estado que lee eventos. Cada evento lo lleva a un
  * estado que hace UNA tarea y vuelve a IDLE.
  *
- *   Estado actual      Evento              Estado siguiente   Acción [ENTER]
- *   -----------------  ------------------  -----------------  -----------------------------------------
- *   STATE_IDLE         EV_ENCODER_CHANGED  STATE_UPDATE_PWM   -
- *   STATE_IDLE         EV_PHOTO_CCR        STATE_EDIT_CCR     -
- *   STATE_IDLE         EV_PHOTO_ARR        STATE_EDIT_ARR     -
- *   STATE_IDLE         EV_BLINK_TICK       STATE_BLINK        -
- *   STATE_UPDATE_PWM   (incondicional)     STATE_IDLE         ccr_ApplySteps o arr_ApplySteps(encoder_TakeSteps()),
- *                                                             según edit_state
- *   STATE_EDIT_CCR     (incondicional)     STATE_IDLE         edit_state = STATE_EDIT_CCR, TIM4->ARR = 250 ms
- *   STATE_EDIT_ARR     (incondicional)     STATE_IDLE         edit_state = STATE_EDIT_ARR, TIM4->ARR = 500 ms
- *   STATE_BLINK        (incondicional)     STATE_IDLE         led_Toggle()
- *   STATE_ERROR        (cualquiera)        STATE_IDLE         recuperación
+ *   Estado actual     Evento              Estado siguiente   Acción [ENTER]
+ *   ----------------  ------------------  -----------------  -----------------------------------------
+ *   STATE_IDLE        EV_PHOTO_CCR        STATE_EDIT_CCR     -
+ *   STATE_IDLE        EV_PHOTO_ARR        STATE_EDIT_ARR     -
+ *   STATE_IDLE        EV_ENCODER_CHANGED  STATE_UPDATE_PWM   -
+ *   STATE_IDLE        EV_BLINK_TICK       STATE_BLINK        -
+ *   STATE_EDIT_CCR    (incondicional)     STATE_IDLE         edit_mode = MODE_CCR
+ *   STATE_EDIT_ARR    (incondicional)     STATE_IDLE         edit_mode = MODE_ARR
+ *   STATE_UPDATE_PWM  (incondicional)     STATE_IDLE         ccr_ApplySteps o arr_ApplySteps(encoder_TakeSteps()),
+ *                                                            según edit_mode
+ *   STATE_BLINK       (incondicional)     STATE_IDLE         led_Toggle()
+ *   STATE_ERROR       (cualquiera)        STATE_IDLE         recuperación
  *
  ******************************************************************************
  */
@@ -74,38 +74,35 @@
 #include <stdint.h>
 #include <stm32f4xx.h>
 
-//Constantes
-const int32_t counts_per_step = 4; //El modo encoder 3 cuenta 4 flancos por cada paso mecánico del encoder
-const int32_t ccr_step = 10; //Lo que suma o resta al CCR1 cada paso del encoder en STATE_EDIT_CCR
-const int32_t arr_step = 20; //Lo que suma o resta al ARR cada paso del encoder en STATE_EDIT_ARR
-const int32_t arr_min = 99; //ARR mínimo: (99 + 1) x 1 us = 100 us -> 10 kHz (con ARR = 0 el contador queda bloqueado)
-const int32_t arr_max = 65534; //ARR máximo: TIM3 es de 16 bit y ARR + 1 (el CCR1 máximo) debe caber en 16 bit
-const uint32_t blink_ccr_ms = 250; //PH1 cambia cada 250 ms en STATE_EDIT_CCR
-const uint32_t blink_arr_ms = 500; //PH1 cambia cada 500 ms en STATE_EDIT_ARR
-
 //Estados de la FSM (el QUÉ)
 typedef enum {
 	STATE_IDLE, //Reposo: espera un evento sin hacer nada más (no bloquea)
-	STATE_UPDATE_PWM, //Atiende el giro del encoder: suma o resta al ARR o al CCR1 según edit_state
-	STATE_EDIT_CCR, //Modo CCR: el encoder cambia el CCR1 (ancho del pulso), blinky cada 250 ms
-	STATE_EDIT_ARR, //Modo ARR: el encoder cambia el ARR (periodo), blinky cada 500 ms
+	STATE_EDIT_CCR, //Elige el modo CCR (lo pide la fotocompuerta de PA12)
+	STATE_EDIT_ARR, //Elige el modo ARR (lo pide la fotocompuerta de PB8)
+	STATE_UPDATE_PWM, //Atiende el giro del encoder: suma o resta al CCR1 o al ARR según edit_mode
 	STATE_BLINK, //Atiende el tick del TIM4: cambia el estado del LED PH1
 	STATE_ERROR, //Estado inválido (trampa de hardware): se recupera hacia STATE_IDLE
 	NUM_STATES //Centinela: cantidad de estados, sirve para validar el rango
 } State_t;
 
+//Modos de edición (qué cambia el encoder)
+typedef enum {
+	MODE_CCR, //El encoder cambia el CCR1 (ancho del pulso)
+	MODE_ARR //El encoder cambia el ARR (periodo)
+} Mode_t;
+
 //Eventos de la FSM (Según que cambian los estados)
 typedef enum {
 	EV_NONE, //No ha ocurrido nada
 	EV_ENCODER_CHANGED, //El encoder avanzó o retrocedió al menos un paso
-	EV_PHOTO_CCR, //Fotocompuerta de PA12 (flanco de bajada): editar el CCR
-	EV_PHOTO_ARR, //Fotocompuerta de PB8 (flanco de bajada): editar el ARR
-	EV_BLINK_TICK //Venció el medio periodo del blinky (250 ms en STATE_EDIT_CCR, 500 ms en STATE_EDIT_ARR)
+	EV_PHOTO_CCR, //Fotocompuerta de PA12 (flanco de bajada): elegir editar el CCR
+	EV_PHOTO_ARR, //Fotocompuerta de PB8 (flanco de bajada): elegir editar el ARR
+	EV_BLINK_TICK //Venció el periodo del blinky (250 ms)
 } Event_t;
 
 //Variables
 State_t current_state = STATE_IDLE; //Estado actual de la FSM, siempre inicia en reposo
-State_t edit_state = STATE_EDIT_CCR; //Último modo elegido (STATE_EDIT_CCR o STATE_EDIT_ARR): UPDATE_PWM lo consulta
+Mode_t edit_mode = MODE_CCR; //Modo elegido (MODE_CCR o MODE_ARR): una sola variable, por eso son excluyentes
 uint8_t state_entry_flag = 1; //Vale 1 al llegar a un estado para que su acción [ENTER] corra exactamente una vez
 
 volatile uint8_t photo_ccr_flag = 0; //Bandera que deja la ISR de PA12 (volatile: cambia fuera del flujo normal)
@@ -120,8 +117,8 @@ int32_t ccr_value = 0; //CCR1 que tiene el TIM3 (ancho del pulso en ticks de 1 u
 //Drivers de la FSM (el CÓMO)
 Event_t get_next_event(void); //Lee (y limpia) las banderas de las ISR y la lectura del encoder, y las convierte en un evento
 int32_t encoder_TakeSteps(void); //Devuelve los pasos acumulados (con signo) y los descuenta del TIM2
-void ccr_ApplySteps(int32_t steps); //Suma steps x ccr_step al CCR1, con saturación
-void arr_ApplySteps(int32_t steps); //Suma steps x arr_step al ARR, con saturación
+void ccr_ApplySteps(int32_t steps); //Suma steps x 10 al CCR1, con saturación
+void arr_ApplySteps(int32_t steps); //Suma steps x 20 al ARR, con saturación
 void led_Toggle(void); //Cambia el estado del LED PH1
 
 //Inicialización del hardware
@@ -163,17 +160,17 @@ int main(void){
             //[DO] Solo IDLE consume eventos: los otros estados duran una pasada y no lo necesitan
             current_event = get_next_event();
 
-            //Transiciones: cada evento lleva a un estado distinto
-            if (current_event == EV_ENCODER_CHANGED) {
-                current_state = STATE_UPDATE_PWM;
-                state_entry_flag = 1;
-            }
-            else if (current_event == EV_PHOTO_CCR) {
+            //Transiciones
+            if (current_event == EV_PHOTO_CCR) {
                 current_state = STATE_EDIT_CCR;
                 state_entry_flag = 1;
             }
             else if (current_event == EV_PHOTO_ARR) {
                 current_state = STATE_EDIT_ARR;
+                state_entry_flag = 1;
+            }
+            else if (current_event == EV_ENCODER_CHANGED) {
+                current_state = STATE_UPDATE_PWM;
                 state_entry_flag = 1;
             }
             else if (current_event == EV_BLINK_TICK) {
@@ -182,15 +179,10 @@ int main(void){
             }
             break;
 
-        case STATE_UPDATE_PWM: //Estado que atiende el giro del encoder
-            //[ENTER] Cambia el CCR1 o el ARR según el último modo elegido, exactamente una vez por cada evento del encoder
+        case STATE_EDIT_CCR: //Elige el modo CCR
+            //[ENTER] Se guarda el modo: el siguiente giro del encoder cambiará el CCR1
             if (state_entry_flag) {
-                if (edit_state == STATE_EDIT_CCR) {
-                    ccr_ApplySteps(encoder_TakeSteps());
-                }
-                else {
-                    arr_ApplySteps(encoder_TakeSteps());
-                }
+                edit_mode = MODE_CCR;
                 state_entry_flag = 0;
             }
             //Transición incondicional: la tarea ya fue atendida, se regresa al reposo
@@ -198,22 +190,25 @@ int main(void){
             state_entry_flag = 1;
             break;
 
-        case STATE_EDIT_CCR: //Modo CCR: lo elige la fotocompuerta de PA12
-            //[ENTER] Se guarda el modo y el blinky pasa a 250 ms (entra al terminar el periodo actual)
+        case STATE_EDIT_ARR: //Elige el modo ARR
+            //[ENTER] Se guarda el modo: el siguiente giro del encoder cambiará el ARR
             if (state_entry_flag) {
-                edit_state = STATE_EDIT_CCR;
-                TIM4->ARR = blink_ccr_ms - 1;
+                edit_mode = MODE_ARR;
                 state_entry_flag = 0;
             }
             current_state = STATE_IDLE;
             state_entry_flag = 1;
             break;
 
-        case STATE_EDIT_ARR: //Modo ARR: lo elige la fotocompuerta de PB8
-            //[ENTER] Se guarda el modo y el blinky pasa a 500 ms
+        case STATE_UPDATE_PWM: //Atiende el giro del encoder
+            //[ENTER] Cambia el CCR1 o el ARR según el modo elegido, exactamente una vez por cada evento del encoder
             if (state_entry_flag) {
-                edit_state = STATE_EDIT_ARR;
-                TIM4->ARR = blink_arr_ms - 1;
+                if (edit_mode == MODE_CCR) {
+                    ccr_ApplySteps(encoder_TakeSteps());
+                }
+                else {
+                    arr_ApplySteps(encoder_TakeSteps());
+                }
                 state_entry_flag = 0;
             }
             current_state = STATE_IDLE;
@@ -254,7 +249,7 @@ Event_t get_next_event(void){
     }
 
     int32_t counts = (int32_t) TIM2->CNT; //Con signo: al girar en CCW desde 0, CNT pasa a 0xFFFFFFFF, que es -1
-    if ((counts >= counts_per_step) || (counts <= -counts_per_step)) { //Hay al menos un paso completo, CW o CCW
+    if ((counts >= 4) || (counts <= -4)) { //4 cuentas = 1 paso mecánico (modo encoder 3). Hay al menos un paso completo, CW o CCW
         return EV_ENCODER_CHANGED;
     }
 
@@ -268,14 +263,14 @@ Event_t get_next_event(void){
 
 //Devuelve los pasos completos acumulados (+ CW, - CCW) y los descuenta del TIM2
 int32_t encoder_TakeSteps(void){
-    int32_t steps = (int32_t) TIM2->CNT / counts_per_step; //División entera: 7 cuentas = 1 paso, -7 cuentas = -1 paso
-    TIM2->CNT -= steps * counts_per_step; //Se descuentan solo las cuentas usadas, el residuo queda para el siguiente giro
+    int32_t steps = (int32_t) TIM2->CNT / 4; //4 cuentas = 1 paso.
+    TIM2->CNT = 0; //Se reinicia CNT
     return steps;
 }
 
 //Suma los pasos al CCR1 y lo limita entre 0 y ARR + 1
 void ccr_ApplySteps(int32_t steps){
-    ccr_value += steps * ccr_step; //Cambia el ancho del pulso
+    ccr_value += steps * 10; //10 us por paso. Cambia el ancho del pulso
 
     if (ccr_value < 0) ccr_value = 0;
     if (ccr_value > arr_value + 1) ccr_value = arr_value + 1;
@@ -283,12 +278,12 @@ void ccr_ApplySteps(int32_t steps){
     TIM3->CCR1 = ccr_value; //Con OC1PE = 1 entra al terminar el periodo actual
 }
 
-//Suma los pasos al ARR y lo limita entre arr_min y arr_max, recortando el CCR1 si queda mayor que ARR + 1
+//Suma los pasos al ARR y lo limita entre 99 y 65534, recortando el CCR1 si queda mayor que ARR + 1
 void arr_ApplySteps(int32_t steps){
-    arr_value += steps * arr_step; //Cambia el periodo
+    arr_value += steps * 20; //20 us por paso. Cambia el periodo
 
-    if (arr_value < arr_min) arr_value = arr_min;
-    if (arr_value > arr_max) arr_value = arr_max;
+    if (arr_value < 99) arr_value = 99; //(99 + 1) x 1 us = 100 us -> 10 kHz (con ARR = 0 el contador queda bloqueado)
+    if (arr_value > 65534) arr_value = 65534; //TIM3 es de 16 bit y ARR + 1 (el CCR1 máximo) debe caber en 16 bit
     if (ccr_value > arr_value + 1) ccr_value = arr_value + 1; //Un periodo más corto puede dejar el CCR1 fuera de rango
 
     TIM3->ARR = arr_value; //Con ARPE = 1 y OC1PE = 1 entran al terminar el periodo actual
@@ -372,7 +367,7 @@ void init_timer4(void){
     RCC->APB1ENR |= RCC_APB1ENR_TIM4EN; //Reloj del TIM4
 
 	TIM4->PSC = 16000-1; //16 MHz / 16000 = 1 kHz
-	TIM4->ARR = blink_ccr_ms-1; //250ms (el modo inicial es STATE_EDIT_CCR)
+	TIM4->ARR = 250-1; //250ms, fijo: el blinky no depende del modo
 	TIM4->CR1 |= TIM_CR1_ARPE; //ARR con preload
 	TIM4->EGR |= TIM_EGR_UG; //Fuerza una actualización para cargar PSC y ARR antes de arrancar
 	TIM4->SR &= ~TIM_SR_UIF; //El UG levanta UIF: se baja para que no cuente como un tick falso
@@ -414,7 +409,7 @@ void init_tim2_encoder(void){
 
 /* Funciones ISR (solo registran el evento y regresan, sin lógica de la FSM) */
 
-//Cada vez que vence el TIM4 (250 ms o 500 ms según el modo) deja la bandera del blinky
+//Cada vez que vence el TIM4 (cada 250 ms) deja la bandera del blinky
 void TIM4_IRQHandler(void)
 {
 	TIM4->SR &= ~TIM_SR_UIF; //Baja la bandera (escribiendo 0) para que la interrupción se pueda repetir
@@ -437,4 +432,3 @@ void EXTI15_10_IRQHandler(void){
         photo_ccr_flag = 1; //La FSM lo convierte en EV_PHOTO_CCR
     }
 }
-

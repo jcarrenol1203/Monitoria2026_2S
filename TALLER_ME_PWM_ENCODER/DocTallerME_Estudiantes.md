@@ -14,7 +14,7 @@ El programa final controla una **señal PWM** con un **encoder rotatorio**:
 - El encoder sube o baja un valor cada vez que se gira.
 - Dos **fotocompuertas** eligen *cuál* valor cambia el encoder: el **ancho del
   pulso** (`CCR1`) o el **periodo** (`ARR`) del PWM.
-- Un **LED** parpadea más rápido o más lento según lo que se esté editando.
+- Un **LED** parpadea cada 250 ms, sin importar lo que se esté editando.
 
 Al terminar el estudiante debe poder:
 
@@ -35,7 +35,7 @@ Al terminar el estudiante debe poder:
 | Encoder, DT (TIM2 CH2)  | PA1  | La otra señal del encoder                        |
 | Fotocompuerta 1         | PB8  | Elige editar el **ARR** (periodo)                |
 | Fotocompuerta 2         | PA12 | Elige editar el **CCR1** (ancho del pulso)       |
-| LED                     | PH1  | Muestra el modo con su velocidad de parpadeo     |
+| LED                     | PH1  | Parpadea cada 250 ms                             |
 
 Las dos fotocompuertas generan una **interrupción externa (EXTI)** en el flanco
 de **bajada**: la interrupción ocurre cuando la salida pasa de 1 a 0.
@@ -85,7 +85,7 @@ situación. Tiene cuatro ingredientes:
 |----------------|--------------------------------------------------------------------|-----------------------------------------|
 | **Estado**     | La situación en la que está el sistema en un instante              | "Estoy editando el CCR"                 |
 | **Evento**     | Algo que ocurre y puede cambiar el estado                          | "Se giró el encoder"                    |
-| **Transición** | El paso de un estado a otro cuando ocurre un evento                | De `IDLE` a otro estado al girar el encoder |
+| **Transición** | El paso de un estado a otro cuando ocurre un evento                | De `IDLE` a `STATE_EDIT_ARR` al activar PB8 |
 | **Acción**     | Lo que se ejecuta al llegar a un estado o durante la transición    | Cambiar el `CCR1` del PWM               |
 
 ### 3.1 Por qué el programa no se bloquea
@@ -109,6 +109,15 @@ consulta si hay eventos. Cuando llega uno, `IDLE` pasa a un estado que
 atiende **esa única tarea** y luego regresa a `IDLE`. Así, mientras no pasa
 nada, el programa simplemente da vueltas en `IDLE`.
 
+### 3.3 Modos excluyentes
+
+Editar el `CCR1` y editar el `ARR` son dos modos que **no pueden estar activos
+a la vez**. Para eso hay **una sola variable**, `edit_mode`, de un `enum`
+propio con dos valores: `MODE_CCR` y `MODE_ARR`. Las fotocompuertas pasan por
+un estado (`STATE_EDIT_CCR` o `STATE_EDIT_ARR`) que solo cambia esa variable.
+El trabajo se hace en `STATE_UPDATE_PWM`, que consulta `edit_mode` y modifica
+el `CCR1` o el `ARR` según corresponda.
+
 ---
 
 ## 4. La máquina de estados del taller
@@ -121,20 +130,20 @@ regresan a `IDLE` no esperan ningún evento (se dicen *incondicionales*).
 ```mermaid
 flowchart LR
     IDLE((STATE_IDLE))
+    ECCR[STATE_EDIT_CCR]
+    EARR[STATE_EDIT_ARR]
     UPD[STATE_UPDATE_PWM]
-    CCR[STATE_EDIT_CCR]
-    ARR[STATE_EDIT_ARR]
     BLK[STATE_BLINK]
     ERR[STATE_ERROR]
 
+    IDLE -- EV_PHOTO_CCR --> ECCR
+    IDLE -- EV_PHOTO_ARR --> EARR
     IDLE -- EV_ENCODER_CHANGED --> UPD
-    IDLE -- EV_PHOTO_CCR --> CCR
-    IDLE -- EV_PHOTO_ARR --> ARR
     IDLE -- EV_BLINK_TICK --> BLK
 
+    ECCR -- incondicional --> IDLE
+    EARR -- incondicional --> IDLE
     UPD -- incondicional --> IDLE
-    CCR -- incondicional --> IDLE
-    ARR -- incondicional --> IDLE
     BLK -- incondicional --> IDLE
     ERR -- recuperación --> IDLE
 ```
@@ -147,9 +156,9 @@ estados vuelven a `IDLE`.
 | Estado              | Qué hace al entrar (acción)                                                       |
 |---------------------|-----------------------------------------------------------------------------------|
 | `STATE_IDLE`        | Nada. Es el único que consulta si hay un evento.                                  |
-| `STATE_UPDATE_PWM`  | Aplica los pasos del encoder al valor que se esté editando (CCR1 o ARR)           |
-| `STATE_EDIT_CCR`    | Fija el modo "editar el ancho del pulso" y pone el blinky en 250 ms               |
-| `STATE_EDIT_ARR`    | Fija el modo "editar el periodo" y pone el blinky en 500 ms                       |
+| `STATE_EDIT_CCR`    | Elige el modo CCR: `edit_mode = MODE_CCR`                                         |
+| `STATE_EDIT_ARR`    | Elige el modo ARR: `edit_mode = MODE_ARR`                                         |
+| `STATE_UPDATE_PWM`  | Según `edit_mode`, aplica los pasos del encoder al `CCR1` o al `ARR`              |
 | `STATE_BLINK`       | Cambia el estado del LED PH1                                                      |
 | `STATE_ERROR`       | Estado de seguridad: si la variable del estado queda con un valor imposible, se recupera hacia `IDLE` |
 
@@ -161,29 +170,30 @@ estados vuelven a `IDLE`.
 | `EV_ENCODER_CHANGED` | El encoder avanzó o retrocedió al menos un paso completo                   |
 | `EV_PHOTO_CCR`       | Se activó la fotocompuerta de PA12                                         |
 | `EV_PHOTO_ARR`       | Se activó la fotocompuerta de PB8                                          |
-| `EV_BLINK_TICK`      | Venció el tiempo del TIM4 (250 ms o 500 ms según el modo)                  |
+| `EV_BLINK_TICK`      | Venció el tiempo del TIM4 (250 ms)                                         |
 
 ### 4.4 Transiciones
 
-| Estado actual      | Evento               | Estado siguiente   |
-|--------------------|----------------------|--------------------|
-| `STATE_IDLE`       | `EV_ENCODER_CHANGED` | `STATE_UPDATE_PWM` |
-| `STATE_IDLE`       | `EV_PHOTO_CCR`       | `STATE_EDIT_CCR`   |
-| `STATE_IDLE`       | `EV_PHOTO_ARR`       | `STATE_EDIT_ARR`   |
-| `STATE_IDLE`       | `EV_BLINK_TICK`      | `STATE_BLINK`      |
-| `STATE_UPDATE_PWM` | (incondicional)      | `STATE_IDLE`       |
-| `STATE_EDIT_CCR`   | (incondicional)      | `STATE_IDLE`       |
-| `STATE_EDIT_ARR`   | (incondicional)      | `STATE_IDLE`       |
-| `STATE_BLINK`      | (incondicional)      | `STATE_IDLE`       |
-| `STATE_ERROR`      | (cualquiera)         | `STATE_IDLE`       |
+| Estado actual        | Evento               | Estado siguiente     |
+|----------------------|----------------------|----------------------|
+| `STATE_IDLE`         | `EV_PHOTO_CCR`       | `STATE_EDIT_CCR`     |
+| `STATE_IDLE`         | `EV_PHOTO_ARR`       | `STATE_EDIT_ARR`     |
+| `STATE_IDLE`         | `EV_ENCODER_CHANGED` | `STATE_UPDATE_PWM`   |
+| `STATE_IDLE`         | `EV_BLINK_TICK`      | `STATE_BLINK`        |
+| `STATE_EDIT_CCR`     | (incondicional)      | `STATE_IDLE`         |
+| `STATE_EDIT_ARR`     | (incondicional)      | `STATE_IDLE`         |
+| `STATE_UPDATE_PWM`   | (incondicional)      | `STATE_IDLE`         |
+| `STATE_BLINK`        | (incondicional)      | `STATE_IDLE`         |
+| `STATE_ERROR`        | (cualquiera)         | `STATE_IDLE`         |
 
 ### 4.5 Comportamiento esperado
 
-- Al arrancar, el modo es **CCR**: el LED parpadea cada 250 ms y el encoder
-  cambia el ancho del pulso (suma o resta 10 µs por paso).
-- La fotocompuerta de **PB8** cambia al modo **ARR**: el LED parpadea cada
-  500 ms y el encoder cambia el periodo (suma o resta 20 µs por paso).
+- Al arrancar, el modo es **CCR**: el encoder cambia el ancho del pulso (suma o
+  resta 10 µs por paso).
+- La fotocompuerta de **PB8** cambia al modo **ARR**: el encoder cambia el
+  periodo (suma o resta 20 µs por paso).
 - La fotocompuerta de **PA12** vuelve al modo **CCR**.
+- El LED parpadea siempre cada 250 ms.
 - Los valores tienen límites: el `ARR` se queda entre 99 y 65534, y el
   `CCR1` entre 0 y `ARR + 1`.
 
@@ -191,28 +201,25 @@ estados vuelven a `IDLE`.
 
 ## 5. Qué debes implementar
 
+Los valores fijos (cuentas por paso, tamaño de cada paso, límites del `ARR`, tiempos del blinky) se escriben directamente donde se usan, sin constantes ni `#define`.
+
 Sigue estos pasos **en orden**. Después de cada uno compila; si algo no
 compila, no avances.
 
-### Paso 1. Constantes
-Los valores fijos (cuentas por paso del encoder, tamaño de cada paso del `CCR1`
-y del `ARR`, límites del `ARR`, tiempos del blinky) se declaran como variables
-`const` al comienzo del archivo, **no** con `#define`. Usa nombres que digan
-qué son.
-
-### Paso 2. Estados y eventos
-Declara un `enum` para los **estados** y otro para los **eventos**, con
-`typedef`. Los nombres están en las tablas 4.2 y 4.3. El `enum` de estados debe
+### Paso 1. Estados y eventos
+Declara un `enum` para los **estados**, otro para los **modos** (`MODE_CCR` y
+`MODE_ARR`) y otro para los **eventos**, con `typedef`. Los nombres están en las tablas 4.2 y 4.3. El `enum` de estados debe
 terminar con un valor extra, `NUM_STATES`, que no es un estado: sirve para
 saber cuántos hay y comprobar que la variable del estado no se salió de rango.
-Va después de las constantes y antes de `main`.
+Va después de los `include` y antes de `main`.
 
-### Paso 3. Variables
+### Paso 2. Variables
 Necesitas:
 
 - La variable del **estado actual** (inicia en `STATE_IDLE`).
-- Una variable que recuerde **cuál modo de edición** se eligió por última vez
-  (inicia en `STATE_EDIT_CCR`).
+- Una variable que guarde **cuál modo de edición** está elegido (inicia en
+  `MODE_CCR`). Su tipo es un `enum` propio, aparte del de los estados, con los
+  valores `MODE_CCR` y `MODE_ARR`.
 - Una bandera `state_entry_flag` que vale 1 al llegar a un estado para que su
   acción de entrada se ejecute **una sola vez**.
 - Tres banderas `volatile` para las ISR: una por fotocompuerta y una para el
@@ -220,7 +227,7 @@ Necesitas:
 - Los valores actuales del `ARR` y del `CCR1` (con signo, para poder compararlos
   con los límites).
 
-### Paso 4. Las ISR
+### Paso 3. Las ISR
 Escribe las tres rutinas de interrupción. Las tres hacen lo mismo en esencia:
 
 1. **Bajan** la bandera de hardware que causó la interrupción (si no, la
@@ -234,14 +241,14 @@ Pistas:
   Dentro del manejador hay que comprobar **cuál** línea disparó antes de
   actuar.
 
-### Paso 5. Funciones auxiliares
+### Paso 4. Funciones auxiliares
 Escribe estas funciones (declara su cabecera antes de `main` y defínelas
 después):
 
 | Función               | Qué hace                                                                    |
 |-----------------------|-----------------------------------------------------------------------------|
 | `get_next_event()`    | Revisa las banderas y el encoder, y devuelve **un** evento. Si hay varios, usa esta prioridad: fotocompuertas, luego encoder, luego blinky |
-| `encoder_TakeSteps()` | Devuelve cuántos pasos completos hay en `TIM2->CNT` (con signo) y los descuenta |
+| `encoder_TakeSteps()` | Devuelve cuántos pasos completos hay en `TIM2->CNT` (con signo) y reinicia el contador |
 | `ccr_ApplySteps()`    | Suma los pasos al `CCR1`, lo limita y lo escribe en el timer                |
 | `arr_ApplySteps()`    | Suma los pasos al `ARR`, lo limita y lo escribe en el timer                 |
 | `led_Toggle()`        | Invierte el estado de PH1                                                   |
@@ -250,12 +257,12 @@ Pistas:
 - Un paso del encoder son **4 cuentas**. El contador es de 32 bits sin signo:
   al girar hacia atrás desde 0, `CNT` pasa a un valor enorme. Para detectar el
   sentido, trátalo **con signo**.
-- Descuenta solo las cuentas usadas: si hay 7 cuentas, se aplica 1 paso y
-  quedan 3 para la siguiente vez.
+- Después de calcular los pasos, reinicia el contador (`TIM2->CNT = 0`): ya
+  se usaron. Con 4 cuentas por clic, en reposo `CNT` siempre es múltiplo de 4.
 - Un `ARR` más corto puede dejar el `CCR1` más grande que el periodo; revisa
   ese caso.
 
-### Paso 6. El `switch`
+### Paso 5. El `switch`
 Dentro del `while(1)`, y sin bloquear:
 
 1. **Antes** del `switch`, comprueba que el estado esté dentro de rango; si no
@@ -263,17 +270,21 @@ Dentro del `while(1)`, y sin bloquear:
 2. Un `case` por estado. Cada uno tiene una parte de **entrada** (se ejecuta
    una sola vez gracias a `state_entry_flag`).
 3. Solo `STATE_IDLE` consulta `get_next_event()` y decide la siguiente
-   transición; los demás ejecutan su acción y vuelven a `STATE_IDLE`.
-4. `STATE_ERROR` y `default:` comparten código: regresan a `STATE_IDLE`.
+   transición: una fotocompuerta lleva a `STATE_EDIT_CCR` o `STATE_EDIT_ARR`,
+   el encoder a `STATE_UPDATE_PWM` y el blinky a `STATE_BLINK`.
+4. Los demás estados ejecutan su acción de entrada y vuelven a `STATE_IDLE`:
+   `EDIT_*` guardan el modo, `UPDATE_PWM` consulta el modo y aplica los pasos
+   al `CCR1` o al `ARR`, y `BLINK` cambia el LED.
+5. `STATE_ERROR` y `default:` comparten código: regresan a `STATE_IDLE`.
 
 Cada vez que cambies de estado, **levanta** `state_entry_flag` para que el
 estado nuevo ejecute su acción de entrada.
 
-### Paso 7. Probar
+### Paso 6. Probar
 1. Con el programa corriendo, verifica que PH1 parpadee a 250 ms.
-2. Gira el encoder: el ancho del pulso en PA6 debe cambiar.
-3. Activa la fotocompuerta de PB8: el LED debe pasar a 500 ms y el encoder
-   debe cambiar el periodo.
+2. Gira el encoder: el ancho del pulso en PA6 debe cambiar (modo CCR inicial).
+3. Activa la fotocompuerta de PB8: el LED sigue a 250 ms y el encoder
+   debe cambiar ahora el periodo.
 4. Activa la de PA12: vuelve al modo CCR.
 
 ---
@@ -289,7 +300,7 @@ anteriores, configuración `STM32Cube: STM32Launch STLink GDB Server`).
 2. **Breakpoint en cada `case` del `switch`.** Ejecuta con *Continue* y mira
    cómo recorre los estados: siempre vuelve a `STATE_IDLE`.
 3. **Watch.** Agrega estas expresiones al panel Watch:
-   `current_state`, la variable del modo de edición, las tres banderas,
+   `current_state`, `edit_mode`, las tres banderas,
    `TIM2->CNT`, `TIM3->CCR1`, `TIM3->ARR` y `TIM4->ARR`.
 4. **Registros.** Con el panel de periféricos observa cómo cambia
    `TIM3->CCR1` o `TIM3->ARR` al girar el encoder, según el modo.
@@ -298,8 +309,8 @@ Preguntas para guiar lo que debes observar:
 
 - ¿Cuántas cuentas suma `TIM2->CNT` por cada paso del encoder?
 - Al activar una fotocompuerta, ¿cuántas vueltas del `while(1)` pasan hasta que
-  la máquina llega al estado de edición?
-- ¿Qué valor tiene `TIM4->ARR` en cada modo?
+  la máquina llega al modo de edición?
+- ¿Cambia `TIM4->ARR` al pasar de un modo al otro? ¿Qué valor tiene `edit_mode` después de activar cada fotocompuerta? ¿Qué estados recorre la máquina en ese caso?
 
 ---
 
