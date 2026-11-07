@@ -1,0 +1,4 @@
+# ninja log v7
+2	63	1792704617730809854	CMakeFiles/Taller_PWM_Encoder.dir/Src/sysmem.c.obj	d841d7d312d55cce
+3	66	1792704617733005915	CMakeFiles/Taller_PWM_Encoder.dir/Src/startup_stm32f411xx.S.obj	cc820171b5a8049e
+1	106	1792704617729809854	CMakeFiles/Taller_PWM_Encoder.dir/Src/syscall.c.obj	c7d02333adbdf25

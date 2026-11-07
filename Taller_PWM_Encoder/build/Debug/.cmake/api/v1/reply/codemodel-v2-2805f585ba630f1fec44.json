@@ -1,0 +1,61 @@
+{
+	"configurations" : 
+	[
+		{
+			"abstractTargets" : [],
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-Debug-fd6451d79dc282e2f566.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "Taller_PWM_Encoder",
+					"targetIndexes" : 
+					[
+						0
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "Taller_PWM_Encoder::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-Taller_PWM_Encoder-Debug-866830ff6fbab1265ca6.json",
+					"name" : "Taller_PWM_Encoder",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/jacl/github/Monitoria2026-2S/Taller_PWM_Encoder/build/Debug",
+		"source" : "/home/jacl/github/Monitoria2026-2S/Taller_PWM_Encoder"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	}
+}
